@@ -1,0 +1,22 @@
+{
+  "name": "traceai-app",
+  "version": "0.0.1",
+  "description": "Get paid for your unused internet",
+  "license": "PROPRIETARY",
+  "author": {
+    "name": "AstroMVP",
+    "email": "ali@astromvp.com",
+    "url": "https://astromvp.com"
+  },
+  "main": "./dist/main/main.js",
+  "scripts": {
+    "rebuild": "node -r ts-node/register ../../.erb/scripts/electron-rebuild.js",
+    "postinstall": "npm run rebuild && npm run link-modules",
+    "link-modules": "node -r ts-node/register ../../.erb/scripts/link-modules.ts"
+  },
+  "dependencies": {
+    "@supabase/supabase-js": "^2.81.1",
+    "dotenv": "^17.2.3",
+    "better-sqlite3": "^12.4.1"
+  }
+}

@@ -1,0 +1,295 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* Reset default styles */
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+body {
+  -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow: auto;
+  background-color: #000000;
+  color: #ffffff;
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Helvetica Neue', Arial, sans-serif;
+}
+
+/* Custom scrollbar - Industrial dark theme */
+.dark ::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.dark ::-webkit-scrollbar-track {
+  background: #0a0a0a;
+}
+
+.dark ::-webkit-scrollbar-thumb {
+  background: #2a2a2a;
+  border-radius: 4px;
+}
+
+.dark ::-webkit-scrollbar-thumb:hover {
+  background: #3a3a3a;
+}
+
+/* Firefox scrollbar - Dark mode */
+.dark * {
+  scrollbar-width: thin;
+  scrollbar-color: #2a2a2a #0a0a0a;
+}
+
+/* Custom scrollbar - Light theme */
+.light-mode ::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+
+.light-mode ::-webkit-scrollbar-track {
+  background: #f5f5f5;
+}
+
+.light-mode ::-webkit-scrollbar-thumb {
+  background: #d1d1d1;
+  border-radius: 4px;
+}
+
+.light-mode ::-webkit-scrollbar-thumb:hover {
+  background: #b1b1b1;
+}
+
+/* Firefox scrollbar - Light mode */
+.light-mode * {
+  scrollbar-width: thin;
+  scrollbar-color: #d1d1d1 #f5f5f5;
+}
+
+/* Utility class to hide scrollbar - makes it very subtle */
+.hide-scrollbar {
+  scrollbar-width: thin;
+  -ms-overflow-style: auto;
+}
+
+.hide-scrollbar::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.hide-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+  border-radius: 3px;
+}
+
+.hide-scrollbar::-webkit-scrollbar-track:hover {
+  background: #0a0a0a;
+}
+
+.hide-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(42, 42, 42, 0.5);
+  border-radius: 3px;
+  transition: background 0.2s ease;
+}
+
+.hide-scrollbar::-webkit-scrollbar-thumb:hover,
+.hide-scrollbar::-webkit-scrollbar-track:hover + .hide-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(255, 149, 0, 0.25);
+}
+
+/* Firefox */
+.hide-scrollbar {
+  scrollbar-color: rgba(42, 42, 42, 0.5) transparent;
+}
+
+/* Light mode */
+.light-mode .hide-scrollbar::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.light-mode .hide-scrollbar::-webkit-scrollbar-track:hover {
+  background: #f3f4f6;
+}
+
+.light-mode .hide-scrollbar::-webkit-scrollbar-thumb {
+  background: rgba(209, 213, 219, 0.6);
+  border-radius: 3px;
+  transition: background 0.2s ease;
+}
+
+.light-mode .hide-scrollbar::-webkit-scrollbar-thumb:hover,
+.light-mode .hide-scrollbar::-webkit-scrollbar-track:hover + .light-mode .hide-scrollbar::-webkit-scrollbar-thumb {
+  background: #9ca3af;
+}
+
+.light-mode .hide-scrollbar {
+  scrollbar-color: rgba(209, 213, 219, 0.6) transparent;
+}
+
+/* Show scrollbar on hover - subtle by default, visible on hover */
+.show-scrollbar-on-hover {
+  scrollbar-width: thin;
+}
+
+.show-scrollbar-on-hover::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.show-scrollbar-on-hover::-webkit-scrollbar-track {
+  background: #0a0a0a;
+  border-radius: 3px;
+}
+
+.show-scrollbar-on-hover::-webkit-scrollbar-track:hover {
+  background: #1a1a1a;
+}
+
+.show-scrollbar-on-hover::-webkit-scrollbar-thumb {
+  background: #2a2a2a;
+  border-radius: 3px;
+  transition: background 0.2s ease;
+}
+
+.show-scrollbar-on-hover::-webkit-scrollbar-thumb:hover,
+.show-scrollbar-on-hover::-webkit-scrollbar-track:hover + .show-scrollbar-on-hover::-webkit-scrollbar-thumb {
+  background: rgba(255, 149, 0, 0.3);
+  box-shadow: 0 0 4px rgba(255, 149, 0, 0.2);
+}
+
+/* Firefox */
+.show-scrollbar-on-hover {
+  scrollbar-color: #2a2a2a #0a0a0a;
+}
+
+/* Light mode */
+.light-mode .show-scrollbar-on-hover::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+.light-mode .show-scrollbar-on-hover::-webkit-scrollbar-track {
+  background: #f3f4f6;
+  border-radius: 3px;
+}
+
+.light-mode .show-scrollbar-on-hover::-webkit-scrollbar-track:hover {
+  background: #e5e7eb;
+}
+
+.light-mode .show-scrollbar-on-hover::-webkit-scrollbar-thumb {
+  background: #d1d5db;
+  border-radius: 3px;
+  transition: background 0.2s ease;
+}
+
+.light-mode .show-scrollbar-on-hover::-webkit-scrollbar-thumb:hover,
+.light-mode .show-scrollbar-on-hover::-webkit-scrollbar-track:hover + .light-mode .show-scrollbar-on-hover::-webkit-scrollbar-thumb {
+  background: #9ca3af;
+}
+
+.light-mode .show-scrollbar-on-hover {
+  scrollbar-color: #d1d5db #f3f4f6;
+}
+
+/* Disable user selection */
+.no-select {
+  -webkit-user-select: none;
+  -moz-user-select: none;
+  -ms-user-select: none;
+  user-select: none;
+}
+
+/* Custom utility classes */
+.transition-all {
+  transition-property: all;
+  transition-timing-function: cubic-bezier(0.4, 0, 0.2, 1);
+  transition-duration: 150ms;
+}
+
+/* Industrial precision typography */
+.mono-label {
+  font-family: 'SF Mono', Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+  font-size: 10px;
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  font-weight: 600;
+  color: #a0a0a0;
+}
+
+.mono-metric {
+  font-family: 'SF Mono', Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace;
+  font-size: 36px;
+  font-weight: 300;
+  letter-spacing: -0.02em;
+  color: #ffffff;
+}
+
+/* Status indicator with pulse animation */
+.status-indicator {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  display: inline-block;
+}
+
+.status-indicator.active {
+  animation: pulse 2s cubic-bezier(0.4, 0, 0.6, 1) infinite;
+}
+
+/* Left accent bar for status containers */
+.accent-bar {
+  position: absolute;
+  left: 0;
+  top: 0;
+  bottom: 0;
+  width: 4px;
+  border-radius: 2px 0 0 2px;
+}
+
+/* Button hover lift effect */
+.hover-lift {
+  transition: transform 150ms cubic-bezier(0.4, 0, 0.2, 1);
+}
+
+.hover-lift:hover {
+  transform: translateY(-1px);
+}
+
+.hover-lift:active {
+  transform: scale(0.98);
+}
+
+/* Shimmer effect for hover states */
+.shimmer {
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.05) 50%,
+    transparent 100%
+  );
+  background-size: 200% 100%;
+}
+
+.shimmer:hover {
+  animation: shimmer 2s linear infinite;
+}
+
+iframe#webpack-dev-server-client-overlay {
+  display: none !important;
+}
+
+.titlebar {
+  -webkit-app-region: drag; /* Allow user to drag the window using this titlebar */
+  -webkit-user-select: none; /* Prevent user from selecting things */
+  user-select: none;
+  position: fixed; /* Fix position to prevent scrolling underneath */
+  top: 0;
+  left: 0;
+  right: 0;
+  z-index: 9999; /* Ensure titlebar stays on top */
+  height: 38px; /* Set explicit height to prevent content going underneath */
+}
+

@@ -90,26 +90,28 @@ function Tray({ onStartEarning }: TrayProps): JSX.Element {
   useEffect(() => {
     const fetchDisplays = async () => {
       try {
-        // Get screen sources from desktopCapturer
-        const allSources = await window.electron.ipcRenderer.invoke('get-active-windows');
-        const screenSources = allSources.filter((s: Window) => s.id.startsWith('screen:'));
-
-        // Get actual display information with real names
+        // Get display information with screen source IDs from main process
         const systemDisplays = await window.electron.ipcRenderer.invoke('get-displays');
 
-        // Map screen sources to actual display names by matching display_id
-        const displayList = screenSources.map((source: Window) => {
-          const matchingDisplay = systemDisplays.find((d: Display) => d.id === source.display_id);
-          return {
-            id: source.display_id || source.id,
-            name: matchingDisplay?.name || source.name, // Use actual display name if found
-            screenSourceId: source.id, // Keep the screen source ID for recording
-          };
-        });
+        console.log('Fetched displays:', systemDisplays);
+
+        // Use the displays directly - they now include screenSourceId
+        const displayList = systemDisplays.map((display: Display & { screenSourceId?: string }) => ({
+          id: display.id,
+          name: display.name,
+          screenSourceId: display.screenSourceId,
+        }));
 
         setDisplays(displayList);
         if (!selectedDisplay && displayList.length > 0) {
           setSelectedDisplay(displayList[0].id);
+          // Also set the recording source to the first display
+          if (displayList[0].screenSourceId) {
+            setRecordingSource({
+              id: displayList[0].screenSourceId,
+              type: 'screen',
+            });
+          }
         }
       } catch (error) {
         console.error('Failed to fetch displays:', error);
@@ -249,24 +251,14 @@ function Tray({ onStartEarning }: TrayProps): JSX.Element {
   const captureActiveWindow = useCallback(
     async (sessionId: number, source?: { id: string; type: 'window' | 'screen' }) => {
       const sourceToCapture = source || recordingSource;
-      if (!sourceToCapture) return;
+      if (!sourceToCapture) {
+        console.log('[TRAY] No source to capture');
+        return;
+      }
 
       try {
         const sourceId = sourceToCapture.id;
-
-        // Check for sensitive content before capturing
-        const currentWindowInfo = await window.electron.ipcRenderer.invoke(
-          'get-current-window-info',
-        );
-        const isSensitive = await window.electron.ipcRenderer.invoke(
-          'check-sensitive-content',
-          currentWindowInfo.activeWindow,
-        );
-
-        if (isSensitive) {
-          console.log('Sensitive content detected, skipping capture');
-          return;
-        }
+        console.log(`[TRAY] Capturing session ${sessionId}, source: ${sourceId}`);
 
         const capture = await window.electron.ipcRenderer.invoke(
           'capture-window',
@@ -275,13 +267,15 @@ function Tray({ onStartEarning }: TrayProps): JSX.Element {
         );
 
         if (capture) {
+          console.log(`[TRAY] Capture success, saving...`);
+
           setLastCapture({
             windowName: capture.windowName,
             timestamp: capture.timestamp,
             thumbnail: capture.thumbnail,
           });
 
-          await window.electron.ipcRenderer.invoke('save-recording', {
+          const saveResult = await window.electron.ipcRenderer.invoke('save-recording', {
             session_id: sessionId,
             timestamp: capture.timestamp,
             window_name: capture.windowName,
@@ -290,31 +284,42 @@ function Tray({ onStartEarning }: TrayProps): JSX.Element {
             screenshot: capture.screenshot,
             type: selectedTask ? 'tasked' : 'passive',
           });
+          console.log(`[TRAY] Saved recording ID: ${saveResult}`);
+        } else {
+          console.log('[TRAY] Capture returned null');
         }
       } catch (error) {
-        console.error('Failed to capture window:', error);
+        console.error('[TRAY] Capture error:', error);
       }
     },
-    [recordingSource, activeTab],
+    [recordingSource, selectedTask],
   );
 
   const startCaptureInterval = useCallback(
     (sessionId?: number, source?: { id: string; type: 'window' | 'screen' }) => {
       const activeSessionId = sessionId || currentSessionId;
       const sourceToUse = source || recordingSource;
-      if (!activeSessionId || !sourceToUse) return;
 
-      // First capture immediately
-      captureActiveWindow(activeSessionId, sourceToUse);
+      if (!activeSessionId || !sourceToUse) {
+        console.log('[TRAY] Cannot start capture - missing sessionId or source');
+        return;
+      }
 
-      // Then start interval
+      // Clear any existing interval
       if (captureInterval.current) {
         clearInterval(captureInterval.current);
+        captureInterval.current = null;
       }
-      captureInterval.current = setInterval(
-        () => captureActiveWindow(activeSessionId, sourceToUse),
-        1000,
-      );
+
+      console.log(`[TRAY] Starting 1/second capture for session ${activeSessionId}`);
+
+      // Capture immediately
+      captureActiveWindow(activeSessionId, sourceToUse);
+
+      // Then capture every 1 second
+      captureInterval.current = setInterval(() => {
+        captureActiveWindow(activeSessionId, sourceToUse);
+      }, 1000);
     },
     [currentSessionId, recordingSource, captureActiveWindow],
   );
@@ -393,7 +398,7 @@ function Tray({ onStartEarning }: TrayProps): JSX.Element {
 
   const handleStartRecording = async () => {
     try {
-      // Determine the source to use (local variable, not relying on state)
+      // Determine the source to use
       let sourceToUse = recordingSource;
 
       if (!sourceToUse) {
@@ -401,7 +406,7 @@ function Tray({ onStartEarning }: TrayProps): JSX.Element {
         const selectedDisplayObj = displays.find((d) => d.id === selectedDisplay);
 
         if (!selectedDisplayObj || !selectedDisplayObj.screenSourceId) {
-          console.error('No valid display selected for screen recording');
+          console.error('[TRAY] No valid display selected');
           return;
         }
 
@@ -409,26 +414,12 @@ function Tray({ onStartEarning }: TrayProps): JSX.Element {
           id: selectedDisplayObj.screenSourceId,
           type: 'screen' as const,
         };
-
-        // Update state for future reference
         setRecordingSource(sourceToUse);
       }
 
-      // Check for sensitive content before starting
-      const currentWindowInfo = await window.electron.ipcRenderer.invoke(
-        'get-current-window-info',
-      );
-      const isSensitive = await window.electron.ipcRenderer.invoke(
-        'check-sensitive-content',
-        currentWindowInfo.activeWindow,
-      );
+      console.log('[TRAY] Starting recording with source:', sourceToUse);
 
-      if (isSensitive) {
-        console.error('Cannot start recording: Sensitive content detected');
-        return;
-      }
-
-      console.log('Starting recording...');
+      // Create session
       const sessionId = await window.electron.ipcRenderer.invoke(
         'create-session',
         selectedTask ? 'tasked' : 'passive',
@@ -436,27 +427,27 @@ function Tray({ onStartEarning }: TrayProps): JSX.Element {
       );
 
       if (!sessionId) {
-        console.error('Failed to create session: No session ID returned');
+        console.error('[TRAY] Failed to create session');
         return;
       }
 
-      console.log('Session created with ID:', sessionId);
+      console.log('[TRAY] Session created:', sessionId);
 
-      // First set recording state and session ID
+      // Set recording state
       setIsRecording(true);
       setIsPaused(false);
       setElapsedTime(0);
       setCurrentSessionId(sessionId);
 
-      // Send start recording message to main process
+      // Notify main process
       window.electron.ipcRenderer.sendMessage('start-recording', sessionId);
-      console.log('Recording started successfully');
 
-      // Start capture interval with the source
+      // Start 1/second capture interval
       startCaptureInterval(sessionId, sourceToUse);
+
+      console.log('[TRAY] Recording started');
     } catch (error) {
-      console.error('Failed to start recording:', error);
-      // Reset state on error
+      console.error('[TRAY] Failed to start recording:', error);
       setCurrentSessionId(null);
       setIsRecording(false);
       setIsPaused(false);

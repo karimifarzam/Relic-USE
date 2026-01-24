@@ -3,6 +3,9 @@ import { Navigate } from 'react-router-dom';
 import { useAuth } from '../../contexts/AuthContext';
 import { useTheme } from '../../contexts/ThemeContext';
 
+// DEBUG: Set to true to skip authentication
+const DEBUG_SKIP_AUTH = true;
+
 interface ProtectedRouteProps {
   children: ReactNode;
 }
@@ -10,6 +13,11 @@ interface ProtectedRouteProps {
 export default function ProtectedRoute({ children }: ProtectedRouteProps) {
   const { isAuthenticated, isLoading } = useAuth();
   const { isDark } = useTheme();
+
+  // DEBUG: Skip auth check entirely
+  if (DEBUG_SKIP_AUTH) {
+    return <>{children}</>;
+  }
 
   if (isLoading) {
     return (

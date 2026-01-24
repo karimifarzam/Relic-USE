@@ -65,7 +65,7 @@ const SENSITIVE_KEYWORDS = [
   'natwest',
   'citibank',
   'creditcard',
-  'account',
+  // 'account' removed - too common (e.g., "Google Account", "GitHub - Account Settings")
   'payment',
   'transfer',
   'xvideos',
@@ -245,33 +245,7 @@ const createDashboardWindow = () => {
   return dashboardWindow;
 };
 
-// Move these handlers outside and before createWindow()
-ipcMain.handle('show-delete-confirmation', async (event, options) => {
-  const result = await dialog.showMessageBox({
-    type: 'warning',
-    buttons: ['Cancel', 'Delete'],
-    defaultId: 0,
-    title: options.title || 'Confirm Delete',
-    message: options.message || 'Are you sure you want to delete this item?',
-  });
-
-  return result.response === 1;
-});
-
-ipcMain.handle('delete-session', async (event, sessionId: number) => {
-  try {
-    // Delete from database
-    await dbHelpers.deleteSession(sessionId);
-    // Delete session folder and files
-    fileStorage.deleteSessionFolder(sessionId);
-    return true;
-  } catch (error) {
-    console.error('Failed to delete session:', error);
-    throw error;
-  }
-});
-
-// Move all IPC handler registrations to the top, before any window creation
+// All IPC handler registrations are in registerIpcHandlers()
 function registerIpcHandlers() {
   ipcMain.handle('show-delete-confirmation', async (event, options) => {
     const result = await dialog.showMessageBox({
@@ -323,22 +297,6 @@ function registerIpcHandlers() {
     }
   });
 
-  ipcMain.handle('get-session-recordings', async (event, sessionId: number) => {
-    const recordings = await dbHelpers.getSessionRecordings(sessionId);
-
-    // Load images from files if screenshot_path exists
-    return recordings.map((recording) => {
-      if (recording.screenshot_path) {
-        const screenshot = fileStorage.readScreenshot(recording.screenshot_path);
-        return {
-          ...recording,
-          screenshot: screenshot || recording.screenshot,
-          thumbnail: screenshot || recording.thumbnail,
-        };
-      }
-      return recording;
-    });
-  });
 }
 
 // Add this function to check all visible windows
@@ -349,13 +307,17 @@ async function checkForAnySensitiveContent(): Promise<boolean> {
   });
 
   // When checking for sensitive content, we need to check ALL window names
-  return sources.some((source) => {
+  for (const source of sources) {
     // Skip "Entire Screen" entries as they're not actual windows
     if (source.name.toLowerCase().includes('entire screen')) {
-      return false;
+      continue;
     }
-    return isSensitiveWindow({ title: source.name });
-  });
+    if (isSensitiveWindow({ title: source.name })) {
+      console.log('Sensitive window detected:', source.name);
+      return true;
+    }
+  }
+  return false;
 }
 
 const createWindow = async () => {
@@ -881,57 +843,48 @@ const createWindow = async () => {
     return sources;
   }
 
-  // Update the capture-window handler
+  // Simplified capture-window handler - reliably captures 1 screenshot per call
   ipcMain.handle(
     'capture-window',
     async (event, sourceId: string, sourceType: 'window' | 'screen') => {
       try {
-        // For screen recording, we MUST check ALL windows first
-        if (sourceType === 'screen') {
-          const hasSensitiveContent = await checkForAnySensitiveContent();
-          if (hasSensitiveContent) {
-            showSensitiveContentNotification();
-            return null;
-          }
-        }
+        console.log(`[CAPTURE] Starting capture: sourceId=${sourceId}, sourceType=${sourceType}`);
 
         const sources = await desktopCapturer.getSources({
           types: ['window', 'screen'],
           thumbnailSize: { width: 1920, height: 1080 },
         });
 
-        const source = sources.find((s) =>
-          sourceType === 'screen'
-            ? s.id === sourceId || s.id === `screen:${sourceId}`
-            : s.id === sourceId,
-        );
+        // Find the source - try multiple matching strategies
+        let source = sources.find((s) => s.id === sourceId);
+
+        // If not found by exact ID, try other matching methods for screens
+        if (!source && sourceType === 'screen') {
+          source = sources.find((s) =>
+            s.id.startsWith('screen:') && (
+              s.display_id?.toString() === sourceId ||
+              s.display_id?.toString() === sourceId.replace('screen:', '').split(':')[0]
+            )
+          );
+
+          // Fallback: just use the first screen source
+          if (!source) {
+            source = sources.find((s) => s.id.startsWith('screen:'));
+            console.log('[CAPTURE] Using fallback screen source:', source?.id);
+          }
+        }
 
         if (!source) {
-          console.error('Source not found:', sourceId);
+          console.error('[CAPTURE] No source found. Available:', sources.map(s => s.id));
           return null;
         }
 
-        // For window recording, we only need to check that specific window
-        if (
-          sourceType === 'window' &&
-          isSensitiveWindow({ title: source.name })
-        ) {
-          showSensitiveContentNotification();
-          return null;
-        }
+        console.log(`[CAPTURE] Found source: ${source.id} (${source.name})`);
 
-        // Validate that the thumbnail has actual content (not blank)
+        // Check if thumbnail is valid
         const thumbnailSize = source.thumbnail.getSize();
         if (!thumbnailSize || thumbnailSize.width === 0 || thumbnailSize.height === 0) {
-          console.warn('Blank or invalid thumbnail detected, skipping capture for:', source.name);
-          return null;
-        }
-
-        // Check if the thumbnail is actually empty (all pixels are the same)
-        const buffer = source.thumbnail.toBitmap();
-        const isBlank = buffer.every((byte, index, arr) => index === 0 || byte === arr[0]);
-        if (isBlank) {
-          console.warn('Blank screenshot detected (all pixels identical), skipping capture for:', source.name);
+          console.warn('[CAPTURE] Empty thumbnail - Screen Recording permission may not be granted');
           return null;
         }
 
@@ -939,6 +892,8 @@ const createWindow = async () => {
           width: 300,
           height: Math.round(300 * source.thumbnail.getAspectRatio()),
         });
+
+        console.log(`[CAPTURE] Success: ${thumbnailSize.width}x${thumbnailSize.height}`);
 
         return {
           windowId: source.id,
@@ -948,8 +903,8 @@ const createWindow = async () => {
           screenshot: source.thumbnail.toDataURL(),
         };
       } catch (error) {
-        console.error('Failed to capture window:', error);
-        throw error;
+        console.error('[CAPTURE] Error:', error);
+        return null;
       }
     },
   );
@@ -1395,6 +1350,7 @@ app.on('window-all-closed', () => {
 app
   .whenReady()
   .then(() => {
+    registerIpcHandlers();
     createWindow();
 
     app.on('activate', () => {
@@ -1412,12 +1368,31 @@ app.on('before-quit', () => {
 });
 // Add a new handler for getting all displays
 ipcMain.handle('get-displays', async () => {
-  // Use Electron's screen API for all platforms - it matches display_id from desktopCapturer
-  return screen.getAllDisplays().map((display) => ({
-    id: display.id.toString(),
-    name: display.label || `Display ${display.id}`,
-    resolution: `${display.size.width}x${display.size.height}`,
-  }));
+  // Get screen sources from desktopCapturer to get the actual source IDs
+  const sources = await desktopCapturer.getSources({
+    types: ['screen'],
+    thumbnailSize: { width: 150, height: 150 },
+  });
+
+  // Get display info from Electron's screen API
+  const displays = screen.getAllDisplays();
+
+  console.log('Screen sources:', sources.map(s => ({ id: s.id, name: s.name, display_id: s.display_id })));
+  console.log('System displays:', displays.map(d => ({ id: d.id, label: d.label, bounds: d.bounds })));
+
+  // Map displays to include screen source IDs
+  return displays.map((display, index) => {
+    // Try to match by display_id first, then by index
+    const matchingSource = sources.find(s => s.display_id?.toString() === display.id.toString()) ||
+                           sources[index];
+
+    return {
+      id: display.id.toString(),
+      name: display.label || `Display ${display.id}`,
+      resolution: `${display.size.width}x${display.size.height}`,
+      screenSourceId: matchingSource?.id || `screen:${index}:0`,
+    };
+  });
 });
 
 // Add IPC handler for opening tray window

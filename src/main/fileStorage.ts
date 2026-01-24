@@ -2,6 +2,21 @@ import { app } from 'electron';
 import * as fs from 'fs';
 import * as path from 'path';
 
+// Screenshot LRU cache for performance
+const SCREENSHOT_CACHE_MAX = 50;
+const screenshotCache = new Map<
+  string,
+  { data: string; mtimeMs: number; lastAccess: number }
+>();
+
+function trimScreenshotCache() {
+  while (screenshotCache.size > SCREENSHOT_CACHE_MAX) {
+    const oldestKey = screenshotCache.keys().next().value as string | undefined;
+    if (!oldestKey) return;
+    screenshotCache.delete(oldestKey);
+  }
+}
+
 // Get the recordings directory path
 export function getRecordingsDir(): string {
   return path.join(app.getPath('userData'), 'recordings');
@@ -34,7 +49,6 @@ export function createSessionFolder(sessionId: number): string {
 
 // Convert Base64 data URL to buffer
 function base64ToBuffer(base64String: string): Buffer {
-  // Remove data URL prefix if present
   const base64Data = base64String.replace(/^data:image\/\w+;base64,/, '');
   return Buffer.from(base64Data, 'base64');
 }
@@ -55,16 +69,38 @@ export function saveScreenshot(
   return filePath;
 }
 
-// Read screenshot file and convert to Base64 data URL
+// Read screenshot file with LRU caching
 export function readScreenshot(filePath: string): string | null {
   try {
     if (!fs.existsSync(filePath)) {
       return null;
     }
 
+    const stats = fs.statSync(filePath);
+    const cached = screenshotCache.get(filePath);
+
+    // Return cached version if file hasn't changed
+    if (cached && cached.mtimeMs === stats.mtimeMs) {
+      cached.lastAccess = Date.now();
+      // Refresh LRU order
+      screenshotCache.delete(filePath);
+      screenshotCache.set(filePath, cached);
+      return cached.data;
+    }
+
+    // Read from disk and cache
     const imageBuffer = fs.readFileSync(filePath);
     const base64 = imageBuffer.toString('base64');
-    return `data:image/png;base64,${base64}`;
+    const dataUrl = `data:image/png;base64,${base64}`;
+
+    screenshotCache.set(filePath, {
+      data: dataUrl,
+      mtimeMs: stats.mtimeMs,
+      lastAccess: Date.now(),
+    });
+    trimScreenshotCache();
+
+    return dataUrl;
   } catch (error) {
     console.error('Error reading screenshot:', error);
     return null;

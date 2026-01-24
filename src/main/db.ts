@@ -32,11 +32,11 @@ interface Recording {
   timestamp: string;
   window_name: string;
   window_id: string;
-  thumbnail: string; // Base64 encoded thumbnail (legacy) or file path
-  screenshot: string; // Base64 encoded high quality screenshot (legacy) or file path
-  screenshot_path?: string; // File path for new file-based storage
+  thumbnail: string;
+  screenshot: string;
+  screenshot_path?: string;
   type: 'passive' | 'tasked';
-  label?: string; // Optional label for the recording
+  label?: string;
 }
 
 export interface TimeRangeComment {
@@ -48,99 +48,121 @@ export interface TimeRangeComment {
   created_at: string;
 }
 
-// Initialize database
-const db = new Database(path.join(app.getPath('userData'), 'sessions.sqlite'));
+type PreparedStatements = {
+  createRecording: ReturnType<Database['prepare']>;
+  updateDuration: ReturnType<Database['prepare']>;
+  updateLabel: ReturnType<Database['prepare']>;
+  createComment: ReturnType<Database['prepare']>;
+  deleteComment: ReturnType<Database['prepare']>;
+};
 
-// Create tables
-db.exec(`
-  CREATE TABLE IF NOT EXISTS sessions (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    created_at TEXT NOT NULL,
-    duration INTEGER NOT NULL DEFAULT 0,
-    approval_state TEXT NOT NULL DEFAULT 'draft',
-    session_status TEXT NOT NULL,
-    task_id INTEGER,
-    reward_id INTEGER,
-    CONSTRAINT valid_approval_state CHECK (approval_state IN ('draft', 'submitted', 'approved', 'rejected')),
-    CONSTRAINT valid_session_status CHECK (session_status IN ('passive', 'tasked'))
-  );
-`);
+// Lazy initialization - database only created when first accessed
+let db: Database | null = null;
+let preparedStatements: PreparedStatements | null = null;
 
-db.exec(`
-  CREATE TABLE IF NOT EXISTS recordings (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    session_id INTEGER NOT NULL,
-    timestamp TEXT NOT NULL,
-    window_name TEXT NOT NULL,
-    window_id TEXT NOT NULL,
-    thumbnail TEXT NOT NULL,
-    screenshot TEXT NOT NULL,
-    type TEXT NOT NULL,
-    label TEXT,
-    FOREIGN KEY (session_id) REFERENCES sessions(id),
-    CONSTRAINT valid_type CHECK (type IN ('passive', 'tasked'))
-  );
-`);
+function getDb(): Database {
+  if (db) return db;
 
-db.exec(`
-  CREATE TABLE IF NOT EXISTS comments (
-    id INTEGER PRIMARY KEY AUTOINCREMENT,
-    session_id INTEGER NOT NULL,
-    start_time INTEGER NOT NULL,
-    end_time INTEGER NOT NULL,
-    comment TEXT NOT NULL,
-    created_at TEXT NOT NULL,
-    FOREIGN KEY (session_id) REFERENCES sessions(id)
-  );
-`);
+  db = new Database(path.join(app.getPath('userData'), 'sessions.sqlite'));
 
-// Migration: Add screenshot_path column if it doesn't exist
-try {
-  const rows = db.prepare('PRAGMA table_info(recordings)').all() as any[];
-  const hasScreenshotPath = rows.some((row: any) => row.name === 'screenshot_path');
+  // Create tables
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS sessions (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      created_at TEXT NOT NULL,
+      duration INTEGER NOT NULL DEFAULT 0,
+      approval_state TEXT NOT NULL DEFAULT 'draft',
+      session_status TEXT NOT NULL,
+      task_id INTEGER,
+      reward_id INTEGER,
+      CONSTRAINT valid_approval_state CHECK (approval_state IN ('draft', 'submitted', 'approved', 'rejected')),
+      CONSTRAINT valid_session_status CHECK (session_status IN ('passive', 'tasked'))
+    );
+  `);
 
-  if (!hasScreenshotPath) {
-    db.exec('ALTER TABLE recordings ADD COLUMN screenshot_path TEXT');
-    console.log('Added screenshot_path column to recordings table');
-  } else {
-    console.log('screenshot_path column already exists');
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS recordings (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_id INTEGER NOT NULL,
+      timestamp TEXT NOT NULL,
+      window_name TEXT NOT NULL,
+      window_id TEXT NOT NULL,
+      thumbnail TEXT NOT NULL,
+      screenshot TEXT NOT NULL,
+      type TEXT NOT NULL,
+      label TEXT,
+      FOREIGN KEY (session_id) REFERENCES sessions(id),
+      CONSTRAINT valid_type CHECK (type IN ('passive', 'tasked'))
+    );
+  `);
+
+  db.exec(`
+    CREATE TABLE IF NOT EXISTS comments (
+      id INTEGER PRIMARY KEY AUTOINCREMENT,
+      session_id INTEGER NOT NULL,
+      start_time INTEGER NOT NULL,
+      end_time INTEGER NOT NULL,
+      comment TEXT NOT NULL,
+      created_at TEXT NOT NULL,
+      FOREIGN KEY (session_id) REFERENCES sessions(id)
+    );
+  `);
+
+  // Migration: Add screenshot_path column if it doesn't exist
+  try {
+    const rows = db.prepare('PRAGMA table_info(recordings)').all() as any[];
+    const hasScreenshotPath = rows.some((row: any) => row.name === 'screenshot_path');
+
+    if (!hasScreenshotPath) {
+      db.exec('ALTER TABLE recordings ADD COLUMN screenshot_path TEXT');
+      console.log('Added screenshot_path column to recordings table');
+    } else {
+      console.log('screenshot_path column already exists');
+    }
+  } catch (err) {
+    console.error('Error checking for screenshot_path column:', err);
   }
-} catch (err) {
-  console.error('Error checking for screenshot_path column:', err);
+
+  // Prepare frequently used statements
+  preparedStatements = {
+    createRecording: db.prepare(`
+      INSERT INTO recordings (
+        session_id, timestamp, window_name, window_id,
+        thumbnail, screenshot, screenshot_path, type, label
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `),
+
+    updateDuration: db.prepare(`
+      UPDATE sessions
+      SET duration = ?
+      WHERE id = ?
+    `),
+
+    updateLabel: db.prepare(`
+      UPDATE recordings
+      SET label = ?
+      WHERE id = ?
+    `),
+
+    createComment: db.prepare(`
+      INSERT INTO comments (
+        session_id, start_time, end_time, comment, created_at
+      ) VALUES (?, ?, ?, ?, ?)
+    `),
+
+    deleteComment: db.prepare(`
+      DELETE FROM comments
+      WHERE id = ?
+    `),
+  };
+
+  return db;
 }
 
-// Add statement preparation for frequently used queries
-const preparedStatements = {
-  createRecording: db.prepare(`
-    INSERT INTO recordings (
-      session_id, timestamp, window_name, window_id,
-      thumbnail, screenshot, screenshot_path, type, label
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
-  `),
-
-  updateDuration: db.prepare(`
-    UPDATE sessions
-    SET duration = ?
-    WHERE id = ?
-  `),
-
-  updateLabel: db.prepare(`
-    UPDATE recordings
-    SET label = ?
-    WHERE id = ?
-  `),
-
-  createComment: db.prepare(`
-    INSERT INTO comments (
-      session_id, start_time, end_time, comment, created_at
-    ) VALUES (?, ?, ?, ?, ?)
-  `),
-
-  deleteComment: db.prepare(`
-    DELETE FROM comments
-    WHERE id = ?
-  `),
-};
+function getStatements(): PreparedStatements {
+  getDb(); // Ensure DB is initialized
+  return preparedStatements!;
+}
 
 export const dbHelpers = {
   createSession: (
@@ -150,7 +172,7 @@ export const dbHelpers = {
     return new Promise((resolve, reject) => {
       try {
         console.log('Creating session with:', { sessionStatus, taskId });
-        const stmt = db.prepare(`
+        const stmt = getDb().prepare(`
           INSERT INTO sessions (created_at, session_status, task_id)
           VALUES (?, ?, ?)
         `);
@@ -170,7 +192,7 @@ export const dbHelpers = {
   updateDuration: (sessionId: number, duration: number): Promise<void> => {
     return new Promise((resolve, reject) => {
       try {
-        preparedStatements.updateDuration.run(duration, sessionId);
+        getStatements().updateDuration.run(duration, sessionId);
         resolve();
       } catch (err) {
         reject(err);
@@ -181,7 +203,7 @@ export const dbHelpers = {
   submitForApproval: (sessionId: number): Promise<void> => {
     return new Promise((resolve, reject) => {
       try {
-        const stmt = db.prepare(`
+        const stmt = getDb().prepare(`
           UPDATE sessions
           SET approval_state = ?
           WHERE id = ?
@@ -197,7 +219,7 @@ export const dbHelpers = {
   getAllSessions: (): Promise<Session[]> => {
     return new Promise((resolve, reject) => {
       try {
-        const stmt = db.prepare(`
+        const stmt = getDb().prepare(`
           SELECT DISTINCT s.*
           FROM sessions s
           INNER JOIN recordings r ON s.id = r.session_id
@@ -214,7 +236,7 @@ export const dbHelpers = {
   getSession: (sessionId: number): Promise<Session | null> => {
     return new Promise((resolve, reject) => {
       try {
-        const stmt = db.prepare(`
+        const stmt = getDb().prepare(`
           SELECT * FROM sessions
           WHERE id = ?
         `);
@@ -227,7 +249,6 @@ export const dbHelpers = {
   },
 
   getAllTasks: (): Promise<Task[]> => {
-    // This is a mock implementation - replace with actual DB query
     return Promise.resolve([
       {
         id: 42,
@@ -250,7 +271,6 @@ export const dbHelpers = {
         type: 'Computer software',
         completion: 67,
       },
-      // Add more mock tasks as needed
     ]);
   },
 
@@ -273,7 +293,7 @@ export const dbHelpers = {
   }) => {
     return new Promise((resolve, reject) => {
       try {
-        const info = preparedStatements.createRecording.run(
+        const info = getStatements().createRecording.run(
           recording.session_id,
           recording.timestamp,
           recording.window_name,
@@ -294,7 +314,7 @@ export const dbHelpers = {
   getSessionRecordings: (sessionId: number): Promise<Recording[]> => {
     return new Promise((resolve, reject) => {
       try {
-        const stmt = db.prepare(`
+        const stmt = getDb().prepare(`
           SELECT * FROM recordings
           WHERE session_id = ?
           ORDER BY timestamp DESC
@@ -310,12 +330,10 @@ export const dbHelpers = {
   deleteSession: (sessionId: number): Promise<void> => {
     return new Promise((resolve, reject) => {
       try {
-        // First delete associated recordings
-        const deleteRecStmt = db.prepare('DELETE FROM recordings WHERE session_id = ?');
+        const deleteRecStmt = getDb().prepare('DELETE FROM recordings WHERE session_id = ?');
         deleteRecStmt.run(sessionId);
 
-        // Then delete the session
-        const deleteSessionStmt = db.prepare('DELETE FROM sessions WHERE id = ?');
+        const deleteSessionStmt = getDb().prepare('DELETE FROM sessions WHERE id = ?');
         deleteSessionStmt.run(sessionId);
 
         resolve();
@@ -328,7 +346,7 @@ export const dbHelpers = {
   deleteRecording: (sessionId: number, recordingId: number): Promise<void> => {
     return new Promise((resolve, reject) => {
       try {
-        const stmt = db.prepare(`
+        const stmt = getDb().prepare(`
           DELETE FROM recordings
           WHERE session_id = ? AND id = ?
         `);
@@ -343,7 +361,7 @@ export const dbHelpers = {
   updateRecordingLabel: (recordingId: number, label: string): Promise<void> => {
     return new Promise((resolve, reject) => {
       try {
-        preparedStatements.updateLabel.run(label, recordingId);
+        getStatements().updateLabel.run(label, recordingId);
         resolve();
       } catch (err) {
         reject(err);
@@ -354,7 +372,7 @@ export const dbHelpers = {
   createComment: (comment: TimeRangeComment): Promise<number> => {
     return new Promise((resolve, reject) => {
       try {
-        const info = preparedStatements.createComment.run(
+        const info = getStatements().createComment.run(
           comment.session_id,
           comment.start_time,
           comment.end_time,
@@ -371,7 +389,7 @@ export const dbHelpers = {
   deleteComment: (commentId: number): Promise<void> => {
     return new Promise((resolve, reject) => {
       try {
-        preparedStatements.deleteComment.run(commentId);
+        getStatements().deleteComment.run(commentId);
         resolve();
       } catch (err) {
         reject(err);
@@ -382,7 +400,7 @@ export const dbHelpers = {
   updateComment: (commentId: number, updatedComment: Partial<TimeRangeComment>): Promise<void> => {
     return new Promise((resolve, reject) => {
       try {
-        const stmt = db.prepare(`
+        const stmt = getDb().prepare(`
           UPDATE comments
           SET start_time = ?, end_time = ?, comment = ?
           WHERE id = ?
@@ -404,7 +422,7 @@ export const dbHelpers = {
   getSessionComments: (sessionId: number): Promise<TimeRangeComment[]> => {
     return new Promise((resolve, reject) => {
       try {
-        const stmt = db.prepare(`
+        const stmt = getDb().prepare(`
           SELECT * FROM comments
           WHERE session_id = ?
           ORDER BY start_time ASC
@@ -421,7 +439,7 @@ export const dbHelpers = {
   upsertSession: (session: Session): Promise<void> => {
     return new Promise((resolve, reject) => {
       try {
-        const stmt = db.prepare(`
+        const stmt = getDb().prepare(`
           INSERT INTO sessions (id, created_at, duration, approval_state, session_status, task_id, reward_id)
           VALUES (?, ?, ?, ?, ?, ?, ?)
           ON CONFLICT(id) DO UPDATE SET

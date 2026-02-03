@@ -114,11 +114,14 @@ function Analytics() {
     <main className={`min-h-0 ${isDark ? 'bg-industrial-black-primary' : 'bg-white'}`}>
       <div className="py-6">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
-          <h1 className={`text-2xl font-mono font-light tracking-tight ${isDark ? 'text-white' : 'text-gray-900'}`}>
-            AMRIT&apos;S ANALYTICS
-          </h1>
+          <div className="flex items-center gap-4 sm:self-start sm:pt-1">
+            <h1 className={`text-2xl font-mono font-light tracking-tight ${isDark ? 'text-white' : 'text-gray-900'}`}>
+              ANALYTICS
+            </h1>
+          </div>
 
-          <div className={`rounded-lg p-1 w-auto ${isDark ? 'bg-industrial-black-secondary border border-industrial-border' : 'bg-gray-100 border border-gray-300'}`}>
+          <div className="flex gap-2">
+            <div className={`rounded-lg p-1 w-auto ${isDark ? 'bg-industrial-black-secondary border border-industrial-border' : 'bg-gray-100 border border-gray-300'}`}>
             <div className="flex gap-1">
               {['points', 'submissions'].map((tab) => (
                 <button
@@ -139,6 +142,7 @@ function Analytics() {
                   {tab}
                 </button>
               ))}
+            </div>
             </div>
           </div>
         </div>

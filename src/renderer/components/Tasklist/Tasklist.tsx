@@ -133,51 +133,51 @@ function TaskList() {
           <div className="flex items-center gap-4 sm:self-start sm:pt-1">
             <h1 className={`text-2xl font-mono font-light tracking-tight ${isDark ? 'text-white' : 'text-gray-900'}`}>TASK SELECTION</h1>
           </div>
+
+          {/* Search and Filters */}
+          <div className="flex gap-2">
+            <input
+              type="text"
+              placeholder="Filter tasks..."
+              className={`w-[280px] px-4 py-2 rounded-lg text-[11px] font-mono transition-colors focus:outline-none ${isDark ? 'bg-industrial-black-secondary border border-industrial-border text-white placeholder:text-industrial-white-tertiary focus:border-industrial-blue' : 'bg-white border border-gray-300 text-gray-900 placeholder:text-gray-400 focus:border-blue-500'}`}
+              value={searchQuery}
+              onChange={(e) => setSearchQuery(e.target.value)}
+            />
+
+            {/* Filter Dropdowns */}
+            {[
+              { name: 'Difficulty', options: difficultyFilters },
+              { name: 'Status', options: statusFilters },
+              { name: 'Category', options: categoryFilters },
+            ].map((filter) => (
+              <div key={filter.name} className="relative">
+                <button
+                  onClick={() => handleDropdownClick(filter.name)}
+                  className={`px-4 py-2 rounded-lg text-[10px] uppercase tracking-industrial-wide font-mono font-bold flex items-center gap-2 hover-lift transition-all ${isDark ? 'bg-industrial-black-secondary border border-industrial-border text-white' : 'bg-white border border-gray-300 text-gray-900'}`}
+                >
+                  {filter.name}
+                  <ChevronsUpDown className={`w-3.5 h-3.5 ${isDark ? 'text-industrial-white-tertiary' : 'text-gray-500'}`} strokeWidth={1.5} />
+                </button>
+
+                {activeDropdown === filter.name && (
+                  <div className={`absolute top-full mt-1 w-48 rounded-lg shadow-industrial-lg z-10 overflow-hidden ${isDark ? 'bg-industrial-black-secondary border border-industrial-border' : 'bg-white border border-gray-300'}`}>
+                    {filter.options.map((option) => (
+                      <button
+                        key={option.value}
+                        className={`w-full px-4 py-2 text-[11px] font-mono text-left transition-colors border-b last:border-b-0 ${isDark ? 'text-white hover:bg-industrial-black-tertiary border-industrial-border-subtle' : 'text-gray-900 hover:bg-gray-50 border-gray-200'}`}
+                      >
+                        {option.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+              </div>
+            ))}
+          </div>
         </div>
 
         <div className="flex items-start gap-6">
           <div className="flex-1">
-            {/* Search and Filters */}
-            <div className="flex gap-3 mb-6">
-              <input
-                type="text"
-                placeholder="Filter tasks..."
-                className={`w-[280px] px-4 py-2 rounded-lg text-[11px] font-mono transition-colors focus:outline-none ${isDark ? 'bg-industrial-black-secondary border border-industrial-border text-white placeholder:text-industrial-white-tertiary focus:border-industrial-blue' : 'bg-white border border-gray-300 text-gray-900 placeholder:text-gray-400 focus:border-blue-500'}`}
-                value={searchQuery}
-                onChange={(e) => setSearchQuery(e.target.value)}
-              />
-
-              {/* Filter Dropdowns */}
-              {[
-                { name: 'Difficulty', options: difficultyFilters },
-                { name: 'Status', options: statusFilters },
-                { name: 'Category', options: categoryFilters },
-              ].map((filter) => (
-                <div key={filter.name} className="relative">
-                  <button
-                    onClick={() => handleDropdownClick(filter.name)}
-                    className={`px-4 py-2 rounded-lg text-[10px] uppercase tracking-industrial-wide font-mono font-bold flex items-center gap-2 hover-lift transition-all ${isDark ? 'bg-industrial-black-secondary border border-industrial-border text-white' : 'bg-white border border-gray-300 text-gray-900'}`}
-                  >
-                    {filter.name}
-                    <ChevronsUpDown className={`w-3.5 h-3.5 ${isDark ? 'text-industrial-white-tertiary' : 'text-gray-500'}`} strokeWidth={1.5} />
-                  </button>
-
-                  {activeDropdown === filter.name && (
-                    <div className={`absolute top-full mt-1 w-48 rounded-lg shadow-industrial-lg z-10 overflow-hidden ${isDark ? 'bg-industrial-black-secondary border border-industrial-border' : 'bg-white border border-gray-300'}`}>
-                      {filter.options.map((option) => (
-                        <button
-                          key={option.value}
-                          className={`w-full px-4 py-2 text-[11px] font-mono text-left transition-colors border-b last:border-b-0 ${isDark ? 'text-white hover:bg-industrial-black-tertiary border-industrial-border-subtle' : 'text-gray-900 hover:bg-gray-50 border-gray-200'}`}
-                        >
-                          {option.label}
-                        </button>
-                      ))}
-                    </div>
-                  )}
-                </div>
-              ))}
-            </div>
-
             {/* Table */}
             <div className={`overflow-hidden rounded-lg ${isDark ? 'bg-industrial-black-secondary border border-industrial-border' : 'bg-white border border-gray-200'}`}>
               <table className="w-full">

@@ -189,7 +189,7 @@ function Dashboard() {
     <main className={`min-h-0 ${isDark ? 'bg-industrial-black-primary' : 'bg-white'}`}>
       <BoardHeader />
 
-      {/* Progress Overlay */}
+        {/* Progress Overlay */}
       {submittingSessionId && submissionProgress && (
         <div className="fixed top-20 right-6 z-50">
           <div className={`p-4 rounded-lg shadow-lg border ${isDark ? 'bg-industrial-black-secondary border-industrial-border' : 'bg-white border-gray-300'}`}>
@@ -235,7 +235,6 @@ function Dashboard() {
         </div>
       )}
 
-      <div className="py-6">
         <div className="grid grid-cols-4 gap-4 pb-6">
           <StatusColumn
             title="Draft"

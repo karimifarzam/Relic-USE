@@ -1,3 +1,4 @@
+/* @refresh reset */
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTheme } from '../../contexts/ThemeContext';
@@ -19,6 +20,7 @@ import {
   Pencil,
   Edit2,
   Send,
+  Undo2,
 } from 'lucide-react';
 import myBoard from '../../../../assets/icons/myBoard.svg';
 
@@ -38,6 +40,20 @@ interface TimeRangeComment {
   comment: string;
   created_at: string;
 }
+
+type UndoAction =
+  | {
+      type: 'recordingDeletion';
+      screenshots: Screenshot[];
+      pendingDeletions: number[];
+      selectedIndices: number[];
+      currentIndex: number;
+    }
+  | {
+      type: 'commentDeletion';
+      comment: TimeRangeComment;
+      insertIndex: number;
+    };
 
 interface Recording {
   id?: number;
@@ -161,7 +177,7 @@ const ScreenshotTimeline: React.FC<{
   return (
     <div
       ref={timelineRef}
-      className={`relative h-24 cursor-pointer select-none border ${isDark ? 'bg-industrial-black-tertiary border-industrial-border-subtle' : 'bg-gray-100 border-gray-300'}`}
+      className="relative h-24 cursor-pointer select-none"
       role="grid"
       aria-label="Screenshot timeline"
     >
@@ -715,10 +731,12 @@ function Editor() {
   const [comments, setComments] = useState<TimeRangeComment[]>([]);
   const [selectedIndices, setSelectedIndices] = useState<number[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
-  const [zoomLevel, setZoomLevel] = useState(50);
+  // Controls the per-clip width in the timeline (smaller = more clips visible).
+  const [timelineZoom, setTimelineZoom] = useState(50);
   const [commentToEdit, setCommentToEdit] = useState<number | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isDeletingClip, setIsDeletingClip] = useState(false);
+  const [undoStack, setUndoStack] = useState<UndoAction[]>([]);
   const navigate = useNavigate();
   const { isDark } = useTheme();
 
@@ -743,6 +761,10 @@ function Editor() {
         }));
         setScreenshots(convertedScreenshots);
         setOriginalScreenshots(convertedScreenshots);
+        setPendingDeletions([]);
+        setHasUnsavedChanges(false);
+        setSelectedIndices([]);
+        setUndoStack([]);
 
         // Load comments
         try {
@@ -801,6 +823,10 @@ function Editor() {
               }));
               setScreenshots(convertedScreenshots);
               setOriginalScreenshots(convertedScreenshots);
+              setPendingDeletions([]);
+              setHasUnsavedChanges(false);
+              setSelectedIndices([]);
+              setUndoStack([]);
 
               // Load comments for the draft session
               try {
@@ -858,6 +884,18 @@ function Editor() {
     const newPendingDeletions = indices
       .filter((index) => index >= 0 && index < screenshots.length && screenshots[index])
       .map((index) => Number(screenshots[index].id));
+    if (newPendingDeletions.length === 0) return;
+
+    setUndoStack((prev) => [
+      ...prev,
+      {
+        type: 'recordingDeletion',
+        screenshots: [...screenshots],
+        pendingDeletions: [...pendingDeletions],
+        selectedIndices: [...selectedIndices],
+        currentIndex,
+      },
+    ]);
     setPendingDeletions((prev) => [...prev, ...newPendingDeletions]);
 
     // Update UI
@@ -893,14 +931,12 @@ function Editor() {
           setScreenshots((prev) =>
             prev.map((s, i) => (i === index ? { ...s, label } : s)),
           );
-          setHasUnsavedChanges(true);
         }
       } else {
         // For demo without electron
         setScreenshots((prev) =>
           prev.map((s, i) => (i === index ? { ...s, label } : s)),
         );
-        setHasUnsavedChanges(true);
       }
     } catch (error) {
       console.error('Failed to update label:', error);
@@ -951,6 +987,8 @@ function Editor() {
       setPendingDeletions([]);
       setHasUnsavedChanges(false);
       setOriginalScreenshots(screenshots);
+      // After persisting deletions, we can no longer undo them.
+      setUndoStack((prev) => prev.filter((a) => a.type === 'commentDeletion'));
 
       // Show success message
       window.electron?.ipcRenderer?.sendMessage?.('show-success-notification', {
@@ -970,14 +1008,62 @@ function Editor() {
     }
   };
 
-  const handleCancel = () => {
-    // Revert pending deletions / screenshot edits back to the last saved state.
-    const maxIndex = Math.max(0, originalScreenshots.length - 1);
-    setScreenshots(originalScreenshots);
-    setPendingDeletions([]);
-    setSelectedIndices([]);
-    setCurrentIndex((idx) => Math.min(idx, maxIndex));
-    setHasUnsavedChanges(false);
+  const handleUndo = async () => {
+    if (undoStack.length === 0) return;
+
+    const action = undoStack[undoStack.length - 1];
+    setUndoStack((prev) => prev.slice(0, -1));
+
+    if (action.type === 'recordingDeletion') {
+      setScreenshots(action.screenshots);
+      setPendingDeletions(action.pendingDeletions);
+      setSelectedIndices(action.selectedIndices);
+      setCurrentIndex(action.currentIndex);
+      setHasUnsavedChanges(action.pendingDeletions.length > 0);
+      return;
+    }
+
+    // Comment deletion undo: recreate the comment in the DB and reinsert in the UI.
+    try {
+      const commentToRestore: TimeRangeComment = {
+        session_id: action.comment.session_id,
+        start_time: action.comment.start_time,
+        end_time: action.comment.end_time,
+        comment: action.comment.comment,
+        created_at: action.comment.created_at,
+      };
+
+      if (window.electron?.ipcRenderer?.invoke) {
+        const newId = (await window.electron.ipcRenderer.invoke(
+          'create-comment',
+          {
+            ...commentToRestore,
+            id: Date.now(), // temporary UI id; DB returns the real id
+          },
+        )) as number;
+
+        setComments((prev) => {
+          const next = [...prev];
+          const insertAt = Math.min(Math.max(action.insertIndex, 0), next.length);
+          next.splice(insertAt, 0, { ...commentToRestore, id: newId });
+          return next;
+        });
+      } else {
+        // Demo mode: just reinsert locally
+        setComments((prev) => {
+          const next = [...prev];
+          const insertAt = Math.min(Math.max(action.insertIndex, 0), next.length);
+          next.splice(insertAt, 0, { ...commentToRestore, id: Date.now() });
+          return next;
+        });
+      }
+    } catch (error) {
+      console.error('Failed to undo comment deletion:', error);
+      window.electron?.ipcRenderer?.sendMessage?.('show-error-notification', {
+        title: 'Error',
+        message: 'Failed to undo deletion',
+      });
+    }
   };
 
   const handleDeleteClip = async () => {
@@ -1015,6 +1101,8 @@ function Editor() {
       setHasUnsavedChanges(false);
       setComments([]);
       setCurrentSessionId(null);
+      setSelectedIndices([]);
+      setUndoStack([]);
 
       window.electron?.ipcRenderer?.sendMessage?.('show-success-notification', {
         title: 'Deleted',
@@ -1040,7 +1128,7 @@ function Editor() {
       setIsSubmitting(true);
 
       // If there are pending deletions, save them before submitting.
-      if (hasUnsavedChanges) {
+      if (pendingDeletions.length > 0) {
         const saved = await handleSave();
         if (!saved) return;
       }
@@ -1136,7 +1224,6 @@ function Editor() {
         const commentId = Date.now();
         setComments(prev => [...prev, { ...newComment, id: commentId }]);
       }
-      setHasUnsavedChanges(true);
     } catch (error) {
       console.error('Failed to create comment:', error);
       if (window.electron?.ipcRenderer?.sendMessage) {
@@ -1150,16 +1237,26 @@ function Editor() {
 
   const handleDeleteComment = async (commentId: string) => {
     try {
+      const numericId = Number(commentId);
+      const deleteIndex = comments.findIndex((c) => c.id === numericId);
+      const commentToDelete = deleteIndex >= 0 ? comments[deleteIndex] : undefined;
+
       if (window.electron?.ipcRenderer?.invoke) {
         await window.electron.ipcRenderer.invoke(
           'delete-comment',
-          Number(commentId),
+          numericId,
         );
       }
 
       // Update state regardless of API call
-      setComments(prev => prev.filter(c => c.id !== Number(commentId)));
-      setHasUnsavedChanges(true);
+      setComments(prev => prev.filter(c => c.id !== numericId));
+
+      if (commentToDelete) {
+        setUndoStack((prev) => [
+          ...prev,
+          { type: 'commentDeletion', comment: commentToDelete, insertIndex: deleteIndex },
+        ]);
+      }
     } catch (error) {
       console.error('Failed to delete comment:', error);
       if (window.electron?.ipcRenderer?.sendMessage) {
@@ -1191,7 +1288,6 @@ function Editor() {
           ? { ...c, start_time: startTime, end_time: endTime, comment }
           : c
       ));
-      setHasUnsavedChanges(true);
     } catch (error) {
       console.error('Failed to update comment:', error);
       if (window.electron?.ipcRenderer?.sendMessage) {
@@ -1285,27 +1381,27 @@ function Editor() {
               <>
                 <button
                   type="button"
-                  onClick={handleCancel}
-                  disabled={!hasUnsavedChanges}
+                  onClick={() => void handleUndo()}
+                  disabled={undoStack.length === 0}
                   className={`px-4 py-2 text-[10px] uppercase tracking-industrial-wide font-mono font-bold rounded-lg hover-lift transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
                     isDark
                       ? 'text-industrial-white-secondary hover:text-white bg-industrial-black-secondary border border-industrial-border'
                       : 'text-gray-600 hover:text-gray-900 bg-gray-100 border border-gray-300'
                   }`}
                 >
-                  <X className="w-3.5 h-3.5 inline mr-1.5" strokeWidth={1.5} />
-                  Cancel
+                  <Undo2 className="w-3.5 h-3.5 inline mr-1.5" strokeWidth={1.5} />
+                  Undo
                 </button>
                 <button
                   type="button"
                   onClick={() => void handleSave()}
-                  disabled={!hasUnsavedChanges || !currentSessionId}
+                  disabled={pendingDeletions.length === 0 || !currentSessionId}
                   className={`px-4 py-2 text-[10px] uppercase tracking-industrial-wide font-mono font-bold rounded-lg hover-lift transition-all shadow-industrial-sm disabled:opacity-50 disabled:cursor-not-allowed ${
                     isDark
                       ? 'text-black bg-industrial-orange hover:bg-industrial-orange/90 border border-industrial-orange/20'
                       : 'text-white bg-blue-500 hover:bg-blue-600 border border-blue-600'
                   }`}
-                  title={hasUnsavedChanges ? 'Save pending changes' : 'No pending changes'}
+                  title={pendingDeletions.length > 0 ? 'Save pending deletions' : 'No pending deletions'}
                 >
                   <Save className="w-3.5 h-3.5 inline mr-1.5" strokeWidth={1.5} />
                   Save Changes
@@ -1353,36 +1449,66 @@ function Editor() {
                 Zoom
               </span>
               <div className="flex items-center gap-3">
-                <ZoomOut className={`w-4 h-4 ${isDark ? 'text-industrial-white-tertiary' : 'text-gray-500'}`} strokeWidth={1.5} />
+                <button
+                  type="button"
+                  onClick={() => setTimelineZoom((v) => Math.max(25, v - 10))}
+                  className={`p-1.5 rounded transition-colors ${isDark ? 'hover:bg-industrial-black-tertiary' : 'hover:bg-gray-100'}`}
+                  aria-label="Zoom out timeline"
+                >
+                  <ZoomOut className={`w-4 h-4 ${isDark ? 'text-industrial-white-tertiary' : 'text-gray-500'}`} strokeWidth={1.5} />
+                </button>
                 <input
                   type="range"
                   min="25"
                   max="200"
-                  value={zoomLevel}
-                  onChange={(e) => setZoomLevel(Number(e.target.value))}
+                  value={timelineZoom}
+                  onChange={(e) => setTimelineZoom(Number(e.target.value))}
                   className={`w-32 h-1 rounded-full appearance-none border [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:cursor-pointer [&::-webkit-slider-thumb]:border ${isDark ? 'bg-industrial-black-tertiary border-industrial-border-subtle [&::-webkit-slider-thumb]:bg-industrial-orange [&::-webkit-slider-thumb]:border-industrial-orange/20' : 'bg-gray-200 border-gray-300 [&::-webkit-slider-thumb]:bg-blue-500 [&::-webkit-slider-thumb]:border-blue-600'}`}
                   aria-label="Zoom level"
                 />
-                <ZoomIn className={`w-4 h-4 ${isDark ? 'text-industrial-white-tertiary' : 'text-gray-500'}`} strokeWidth={1.5} />
+                <button
+                  type="button"
+                  onClick={() => setTimelineZoom((v) => Math.min(200, v + 10))}
+                  className={`p-1.5 rounded transition-colors ${isDark ? 'hover:bg-industrial-black-tertiary' : 'hover:bg-gray-100'}`}
+                  aria-label="Zoom in timeline"
+                >
+                  <ZoomIn className={`w-4 h-4 ${isDark ? 'text-industrial-white-tertiary' : 'text-gray-500'}`} strokeWidth={1.5} />
+                </button>
               </div>
             </div>
           </div>
 
           <div className="relative">
-            <ScreenshotTimeline
-              screenshots={screenshots}
-              selectedIndices={selectedIndices}
-              currentIndex={currentIndex}
-              onSelect={handleSelect}
-              onSelectionChange={handleSelectionChange}
-              isDark={isDark}
-            />
-            <CommentIndicatorTimeline
-              comments={comments}
-              screenshots={screenshots}
-              isDark={isDark}
-              onCommentClick={handleCommentTimelineClick}
-            />
+            <div
+              className={`relative overflow-x-auto hide-scrollbar show-scrollbar-on-hover border ${
+                isDark
+                  ? 'bg-industrial-black-tertiary border-industrial-border-subtle'
+                  : 'bg-gray-100 border-gray-300'
+              }`}
+            >
+              <div
+                className="relative"
+                style={{
+                  width:
+                    screenshots.length > 0 ? screenshots.length * timelineZoom : '100%',
+                }}
+              >
+                <ScreenshotTimeline
+                  screenshots={screenshots}
+                  selectedIndices={selectedIndices}
+                  currentIndex={currentIndex}
+                  onSelect={handleSelect}
+                  onSelectionChange={handleSelectionChange}
+                  isDark={isDark}
+                />
+                <CommentIndicatorTimeline
+                  comments={comments}
+                  screenshots={screenshots}
+                  isDark={isDark}
+                  onCommentClick={handleCommentTimelineClick}
+                />
+              </div>
+            </div>
           </div>
         </div>
       </div>

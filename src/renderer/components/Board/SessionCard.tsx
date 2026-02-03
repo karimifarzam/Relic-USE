@@ -1,4 +1,3 @@
-/// <reference types="node" />
 import React, { useState, useEffect, useCallback } from 'react';
 import RecordingCard from './RecordingCard';
 import { useTheme } from '../../contexts/ThemeContext';
@@ -91,10 +90,8 @@ function SessionCard({
     );
   }, [session.approval_state, session.id, activeSessionId, session.duration]);
 
-  // Add polling for active session recordings
+  // Load recordings and refresh on new recordings
   useEffect(() => {
-    let intervalId: NodeJS.Timeout | null = null;
-
     const fetchRecordings = async () => {
       if (session.id) {
         try {
@@ -112,17 +109,19 @@ function SessionCard({
     // Initial fetch
     fetchRecordings();
 
-    // If this is the active session, poll for updates
-    if (session.id === activeSessionId) {
-      intervalId = setInterval(fetchRecordings, 5000);
-    }
+    const newRecordingListener = window.electron.ipcRenderer.on(
+      'new-recording',
+      (data: any) => {
+        if (data?.sessionId === session.id) {
+          fetchRecordings();
+        }
+      },
+    );
 
     return () => {
-      if (intervalId) {
-        clearInterval(intervalId);
-      }
+      newRecordingListener?.();
     };
-  }, [session.id, activeSessionId]);
+  }, [session.id]);
 
   // Fetch comment count
   useEffect(() => {

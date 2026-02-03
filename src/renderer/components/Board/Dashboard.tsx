@@ -1,8 +1,6 @@
-import { useEffect, useState, useMemo, useCallback, memo } from 'react';
+import { useEffect, useState, useMemo, useCallback } from 'react';
 import BoardHeader from './BoardHeader';
 import StatusColumn from './StatusColumn';
-import RecordingCard from './RecordingCard';
-import { Monitor } from 'lucide-react';
 import { useTheme } from '../../contexts/ThemeContext';
 
 interface Session {
@@ -13,17 +11,6 @@ interface Session {
   session_status: 'passive' | 'tasked';
   task_id: number | null;
   reward_id: number | null;
-}
-
-interface Recording {
-  id?: number;
-  session_id: number;
-  timestamp: string;
-  window_name: string;
-  window_id: string;
-  thumbnail: string;
-  screenshot: string;
-  type: 'passive' | 'tasked';
 }
 
 interface SubmissionProgress {
@@ -85,13 +72,10 @@ function Dashboard() {
       },
     );
 
-    // Refresh sessions periodically (every 2 seconds for more responsiveness)
-    const intervalId = setInterval(fetchSessions, 2000);
-
     // Add new effect to listen for recording updates
     const recordingListener = window.electron.ipcRenderer.on(
       'new-recording',
-      async () => {
+      () => {
         // Refresh sessions when new recording is created
         fetchSessions();
       },
@@ -122,7 +106,6 @@ function Dashboard() {
     return () => {
       startListener?.();
       stopListener?.();
-      clearInterval(intervalId);
       recordingListener?.();
       submissionProgressListener?.();
       window.removeEventListener('focus', handleFocus);
@@ -168,14 +151,6 @@ function Dashboard() {
       }
     };
   }, [fetchSessions]);
-
-  const handleStartPassive = async () => {
-    try {
-      await window.electron.ipcRenderer.invoke('open-tracker', 'passive');
-    } catch (error) {
-      console.error('Failed to open tracker:', error);
-    }
-  };
 
   const handleSessionClick = async (sessionId: number) => {
     try {
@@ -288,129 +263,5 @@ function Dashboard() {
     </main>
   );
 }
-
-interface SessionCardProps {
-  session: Session;
-  activeSessionId: number | null;
-  onSubmit?: () => void;
-  onSessionDeleted?: () => void;
-}
-
-const SessionCard = memo(function SessionCard({
-  session,
-  activeSessionId,
-  onSubmit,
-  onSessionDeleted,
-}: SessionCardProps) {
-  const [localDuration, setLocalDuration] = useState(session.duration);
-  const [recordings, setRecordings] = useState<Recording[]>([]);
-  const [canSubmit, setCanSubmit] = useState(false);
-
-  // Memoize formatSessionDuration to prevent recreation on every render
-  const formatSessionDuration = useCallback((seconds: number): string => {
-    const hours = Math.floor(seconds / 3600);
-    const minutes = Math.floor((seconds % 3600) / 60);
-    return `${hours}h ${minutes}m`;
-  }, []);
-
-  // Determine if session can be submitted
-  useEffect(() => {
-    // Can submit if:
-    // 1. Session is in draft state
-    // 2. Session is not currently recording
-    // 3. Has some duration
-    setCanSubmit(
-      session.approval_state === 'draft' &&
-        session.id !== activeSessionId &&
-        session.duration > 0,
-    );
-  }, [session.approval_state, session.id, activeSessionId, session.duration]);
-
-  // Add polling for active session recordings
-  useEffect(() => {
-    const fetchRecordings = async () => {
-      if (session.id) {
-        try {
-          const sessionRecordings = await window.electron.ipcRenderer.invoke(
-            'get-session-recordings',
-            session.id,
-          );
-          setRecordings(sessionRecordings);
-        } catch (error) {
-          console.error('Failed to fetch recordings:', error);
-        }
-      }
-    };
-
-    // Initial fetch
-    fetchRecordings();
-
-    // Listen for new recordings for this session
-    const newRecordingListener = window.electron.ipcRenderer.on(
-      'new-recording',
-      (data: any) => {
-        // Refresh recordings if this event is for our session
-        if (data?.sessionId === session.id) {
-          fetchRecordings();
-        }
-      },
-    );
-
-    // Poll for updates every 2 seconds for all sessions
-    const intervalId = setInterval(fetchRecordings, 2000);
-
-    return () => {
-      clearInterval(intervalId);
-      newRecordingListener?.();
-    };
-  }, [session.id]);
-
-  const handleDeleteRecording = async () => {
-    if (session.id) {
-      try {
-        await window.electron.ipcRenderer.invoke('delete-session', session.id);
-        // Call the callback to refresh the sessions list
-        if (onSessionDeleted) {
-          onSessionDeleted();
-        }
-      } catch (error) {
-        console.error('Failed to delete recording:', error);
-      }
-    }
-  };
-
-  return (
-    <div className="">
-      <div className="flex justify-between items-start mb-2">
-        {canSubmit && onSubmit && (
-          <button
-            type="button"
-            onClick={onSubmit}
-            className="px-3 py-1 bg-blue-500 text-white rounded-md text-sm"
-          >
-            Submit
-          </button>
-        )}
-      </div>
-      {recordings.length > 0 && (
-        <div className="mt-4 space-y-3">
-          {recordings.map((recording) => (
-            <RecordingCard
-              key={recording.id}
-              title={`Recording - ${recording.timestamp.toLocaleString()}`}
-              date={formatSessionDuration(localDuration)}
-              points={0}
-              duration={formatSessionDuration(localDuration)}
-              type={recording.type}
-              thumbnail={recording.thumbnail}
-              sessionId={session.id}
-              onDelete={handleDeleteRecording}
-            />
-          ))}
-        </div>
-      )}
-    </div>
-  );
-});
 
 export default Dashboard;

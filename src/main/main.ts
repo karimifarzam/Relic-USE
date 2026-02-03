@@ -25,13 +25,10 @@ import { autoUpdater } from 'electron-updater';
 import log from 'electron-log';
 import MenuBuilder from './menu';
 import { resolveHtmlPath } from './util';
-import { getMacDisplayInfo, getCurrentDisplay } from './displayUtils';
+import { getCurrentDisplay } from './displayUtils';
 import { getCurrentWindow } from './windowUtils';
 import { dbHelpers, TimeRangeComment } from './db';
 import stateManager from './StateManager';
-import { join } from 'path';
-import { electronApp, optimizer, is } from '@electron-toolkit/utils';
-import icon from '../../resources/icon.png?asset';
 import {
   getCurrentUser,
   signIn,
@@ -50,6 +47,7 @@ import {
 import { syncAllSessionsToLocal } from './syncService';
 import * as fileStorage from './fileStorage';
 import * as migration from './migration';
+import { supabase } from './supabase';
 
 // Add this at the top with other constants
 const SENSITIVE_KEYWORDS = [
@@ -83,6 +81,9 @@ class AppUpdater {
     autoUpdater.checkForUpdatesAndNotify();
   }
 }
+
+let appUpdaterInitialized = false;
+let ipcHandlersRegistered = false;
 
 let mainWindow: BrowserWindow | null = null;
 let trayWindow: BrowserWindow | null = null;
@@ -141,6 +142,168 @@ let isPaused = false;
 let lastSensitiveNotification = 0;
 const NOTIFICATION_THROTTLE = 5000; // 5 seconds between notifications
 
+let cursorMonitorInterval: NodeJS.Timeout | null = null;
+let cursorMonitorInFlight = false;
+const CURSOR_MONITOR_INTERVAL_MS = 100;
+
+function sendToRecordingWindows(channel: string, ...args: unknown[]) {
+  if (mainWindow && !mainWindow.isDestroyed()) {
+    mainWindow.webContents.send(channel, ...args);
+  }
+  if (trayWindow && !trayWindow.isDestroyed()) {
+    trayWindow.webContents.send(channel, ...args);
+  }
+}
+
+function sendToAllWindows(channel: string, ...args: unknown[]) {
+  BrowserWindow.getAllWindows().forEach((window) => {
+    if (!window.isDestroyed()) {
+      window.webContents.send(channel, ...args);
+    }
+  });
+}
+
+function showSensitiveContentNotification() {
+  const now = Date.now();
+  if (now - lastSensitiveNotification <= NOTIFICATION_THROTTLE) return;
+
+  new Notification({
+    title: 'Sensitive Content Detected',
+    body: 'Recording has been automatically paused to protect your privacy.',
+    urgency: 'critical',
+    silent: false,
+  }).show();
+  lastSensitiveNotification = now;
+}
+
+function ensureCursorMonitorStarted() {
+  if (cursorMonitorInterval) return;
+
+  cursorMonitorInterval = setInterval(async () => {
+    if (!isRecording || isPaused) return;
+    if (cursorMonitorInFlight) return;
+
+    cursorMonitorInFlight = true;
+    try {
+      const cursorPosition = screen.getCursorScreenPoint();
+      const cursorDisplay = screen.getDisplayNearestPoint(cursorPosition);
+      const windowInfo = await getCurrentWindow();
+
+      if (isSensitiveWindow(windowInfo)) {
+        showSensitiveContentNotification();
+        isPaused = true;
+        stateManager.pauseActiveSession();
+        sendToRecordingWindows('recording-paused');
+      }
+
+      sendToRecordingWindows('cursor-moved', {
+        position: cursorPosition,
+        activeWindow: windowInfo,
+        display: {
+          id: cursorDisplay.id,
+          bounds: cursorDisplay.bounds,
+        },
+      });
+    } finally {
+      cursorMonitorInFlight = false;
+    }
+  }, CURSOR_MONITOR_INTERVAL_MS);
+}
+
+function stopCursorMonitor() {
+  if (!cursorMonitorInterval) return;
+  clearInterval(cursorMonitorInterval);
+  cursorMonitorInterval = null;
+}
+
+const METADATA_UPDATE_DEBOUNCE_MS = 1500;
+const metadataUpdateTimers = new Map<number, NodeJS.Timeout>();
+
+async function updateSessionMetadataNow(sessionId: number) {
+  try {
+    await fileStorage.updateSessionMetadata(
+      sessionId,
+      dbHelpers.getSession,
+      dbHelpers.getSessionRecordings,
+      dbHelpers.getSessionComments,
+    );
+  } catch (error) {
+    console.error('Failed to update session metadata:', error);
+  }
+}
+
+function scheduleSessionMetadataUpdate(sessionId: number) {
+  const existingTimer = metadataUpdateTimers.get(sessionId);
+  if (existingTimer) {
+    clearTimeout(existingTimer);
+  }
+
+  const timer = setTimeout(() => {
+    metadataUpdateTimers.delete(sessionId);
+    void updateSessionMetadataNow(sessionId);
+  }, METADATA_UPDATE_DEBOUNCE_MS);
+
+  metadataUpdateTimers.set(sessionId, timer);
+}
+
+async function flushSessionMetadataUpdate(sessionId: number) {
+  const existingTimer = metadataUpdateTimers.get(sessionId);
+  if (existingTimer) {
+    clearTimeout(existingTimer);
+    metadataUpdateTimers.delete(sessionId);
+  }
+  await updateSessionMetadataNow(sessionId);
+}
+
+async function getSessionRecordingsWithImages(sessionId: number) {
+  const recordings = await dbHelpers.getSessionRecordings(sessionId);
+
+  return recordings.map((recording) => {
+    const screenshotFromFile = recording.screenshot_path
+      ? fileStorage.readScreenshot(recording.screenshot_path)
+      : null;
+
+    const thumbnailFromFile = recording.screenshot_path
+      ? fileStorage.readThumbnail(recording.screenshot_path, 300)
+      : null;
+
+    const screenshot = screenshotFromFile || recording.screenshot;
+    const thumbnail =
+      thumbnailFromFile ||
+      (recording.thumbnail && recording.thumbnail.length > 0
+        ? recording.thumbnail
+        : screenshot || recording.thumbnail);
+
+    return {
+      ...recording,
+      screenshot,
+      thumbnail,
+    };
+  });
+}
+
+let currentUserId: string | null = null;
+let sessionsSyncInFlight: Promise<void> | null = null;
+let lastSessionsSyncAt = 0;
+const SESSIONS_SYNC_TTL_MS = 2 * 60 * 1000;
+
+async function syncSessionsIfNeeded(userId: string) {
+  const now = Date.now();
+  if (sessionsSyncInFlight) return;
+  if (now - lastSessionsSyncAt < SESSIONS_SYNC_TTL_MS) return;
+
+  sessionsSyncInFlight = (async () => {
+    try {
+      await syncAllSessionsToLocal(userId);
+      lastSessionsSyncAt = Date.now();
+    } catch (error) {
+      console.error('Failed to sync sessions from Supabase:', error);
+    } finally {
+      sessionsSyncInFlight = null;
+    }
+  })();
+}
+
 // Add this function to check for sensitive content
 function isSensitiveWindow(windowInfo: any) {
   if (!windowInfo || !windowInfo.title) return false;
@@ -184,43 +347,19 @@ if (process.env.NODE_ENV === 'production') {
 const userDataPath = app.getPath('userData');
 app.setPath('userData', path.join(userDataPath, 'electron-cache'));
 
-// Add IPC handler for getting active windows
-ipcMain.handle('get-active-windows', async () => {
-  try {
-    const sources = await desktopCapturer.getSources({
-      types: ['window', 'screen'],
-      thumbnailSize: { width: 150, height: 150 },
-    });
+const getPreloadScriptPath = () =>
+  app.isPackaged
+    ? path.join(__dirname, 'preload.js')
+    : path.join(__dirname, '../../.erb/dll/preload.js');
 
-    return sources.map((source) => ({
-      id: source.id,
-      name: source.name,
-      thumbnail: source.thumbnail.toDataURL(),
-      display_id: source.display_id, // Add display_id for matching screens to displays
-    }));
-  } catch (error) {
-    console.error('Failed to get active windows:', error);
-    throw error;
-  }
-});
+const getAssetsBasePath = () =>
+  app.isPackaged
+    ? path.join(process.resourcesPath, 'assets')
+    : path.join(__dirname, '../../assets');
 
-// Add IPC handler for capturing a specific window or screen
-ipcMain.handle('capture-source', async (event, sourceId) => {
-  const sources = await desktopCapturer.getSources({
-    types: ['window', 'screen'],
-    thumbnailSize: { width: 300, height: 200 },
-  });
-
-  const source = sources.find((s) => s.id === sourceId);
-  if (!source) return null;
-
-  return {
-    id: source.id,
-    name: source.name,
-    thumbnail: source.thumbnail.toDataURL(),
-    timestamp: new Date().toISOString(),
-  };
-});
+const getAssetPath = (...paths: string[]): string => {
+  return path.join(getAssetsBasePath(), ...paths);
+};
 
 // Add function to create tray window
 const createTrayWindow = () => {
@@ -231,9 +370,7 @@ const createTrayWindow = () => {
     frame: false,
     skipTaskbar: true,
     webPreferences: {
-      preload: app.isPackaged
-        ? path.join(__dirname, 'preload.js')
-        : path.join(__dirname, '../../.erb/dll/preload.js'),
+      preload: getPreloadScriptPath(),
       partition: 'persist:main',
       enableWebSQL: false,
       allowRunningInsecureContent: false,
@@ -270,9 +407,7 @@ const createDashboardWindow = () => {
       y: 10,
     },
     webPreferences: {
-      preload: app.isPackaged
-        ? path.join(__dirname, 'preload.js')
-        : path.join(__dirname, '../../.erb/dll/preload.js'),
+      preload: getPreloadScriptPath(),
       partition: 'persist:main',
       enableWebSQL: false,
       allowRunningInsecureContent: false,
@@ -298,6 +433,23 @@ const createDashboardWindow = () => {
 
 // All IPC handler registrations are in registerIpcHandlers()
 function registerIpcHandlers() {
+  if (ipcHandlersRegistered) return;
+  ipcHandlersRegistered = true;
+
+  const ensureTrayWindow = () => {
+    if (!trayWindow || trayWindow.isDestroyed()) {
+      createTrayWindow();
+    }
+    return trayWindow;
+  };
+
+  const ensureMainWindow = async () => {
+    if (!mainWindow || mainWindow.isDestroyed()) {
+      await createWindow();
+    }
+    return mainWindow;
+  };
+
   ipcMain.handle('ui:set-scaling-enabled', (event, enabled: boolean) => {
     const win = BrowserWindow.fromWebContents(event.sender);
     if (!win || win.isDestroyed()) return false;
@@ -313,6 +465,11 @@ function registerIpcHandlers() {
     return true;
   });
 
+  ipcMain.handle('set-theme', (event, theme: 'light' | 'dark') => {
+    nativeTheme.themeSource = theme;
+    sendToAllWindows('theme-changed', theme);
+  });
+
   ipcMain.handle('show-delete-confirmation', async (event, options) => {
     const result = await dialog.showMessageBox({
       type: 'warning',
@@ -325,157 +482,94 @@ function registerIpcHandlers() {
     return result.response === 1;
   });
 
-  ipcMain.handle('delete-session', async (event, sessionId: number) => {
+  ipcMain.handle('get-active-windows', async () => {
     try {
-      // Delete from database
-      await dbHelpers.deleteSession(sessionId);
-      // Delete session folder and files
-      fileStorage.deleteSessionFolder(sessionId);
-      return true;
+      const sources = await desktopCapturer.getSources({
+        types: ['window', 'screen'],
+        thumbnailSize: { width: 150, height: 150 },
+      });
+
+      return sources.map((source) => ({
+        id: source.id,
+        name: source.name,
+        thumbnail: source.thumbnail.toDataURL(),
+        display_id: source.display_id,
+      }));
     } catch (error) {
-      console.error('Failed to delete session:', error);
+      console.error('Failed to get active windows:', error);
       throw error;
     }
   });
 
-  // Register other handlers...
-  ipcMain.handle('get-sessions', async () => {
-    try {
-      // Check if user is logged in
-      const userResult = await getCurrentUser();
+  ipcMain.handle('get-displays', async () => {
+    const sources = await desktopCapturer.getSources({
+      types: ['screen'],
+      thumbnailSize: { width: 150, height: 150 },
+    });
 
-      if (userResult.success && userResult.user) {
-        // User is logged in - sync from Supabase first
-        console.log('User is logged in, syncing sessions from Supabase...');
-        try {
-          await syncAllSessionsToLocal(userResult.user.id);
-        } catch (syncError) {
-          console.error('Failed to sync from Supabase, using local data:', syncError);
-        }
+    const displays = screen.getAllDisplays();
+
+    return displays.map((display, index) => {
+      const matchingSource =
+        sources.find(
+          (source) =>
+            source.display_id?.toString() === display.id.toString(),
+        ) || sources[index];
+
+      return {
+        id: display.id.toString(),
+        name: display.label || `Display ${display.id}`,
+        resolution: `${display.size.width}x${display.size.height}`,
+        screenSourceId: matchingSource?.id || `screen:${index}:0`,
+      };
+    });
+  });
+
+  ipcMain.handle('open-tray-window', (event, bounds) => {
+    const win = ensureTrayWindow();
+    if (!win) return;
+
+    const windowBounds = win.getBounds();
+
+    if (bounds) {
+      const yPosition = bounds.y - windowBounds.height;
+      const xPosition = Math.round(
+        bounds.x - windowBounds.width / 2 + bounds.width / 2,
+      );
+      win.setPosition(xPosition, yPosition);
+    }
+
+    win.show();
+    win.focus();
+  });
+
+  ipcMain.handle('show-dashboard', () => {
+    const existingDashboard = BrowserWindow.getAllWindows().find((win) => {
+      const url = win.webContents.getURL();
+      return url.includes('dashboard=true');
+    });
+
+    if (existingDashboard) {
+      if (existingDashboard.isMinimized()) {
+        existingDashboard.restore();
       }
-
-      // Return local sessions (either synced or offline-only)
-      return dbHelpers.getAllSessions();
-    } catch (error) {
-      console.error('Error in get-sessions handler:', error);
-      // Fallback to local sessions on error
-      return dbHelpers.getAllSessions();
+      existingDashboard.focus();
+      return;
     }
+
+    createDashboardWindow();
   });
 
-}
+  ipcMain.handle('focus-main-window', () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
 
-// Add this function to check all visible windows
-async function checkForAnySensitiveContent(): Promise<boolean> {
-  const sources = await desktopCapturer.getSources({
-    types: ['window', 'screen'],
-    thumbnailSize: { width: 150, height: 150 },
-  });
-
-  // When checking for sensitive content, we need to check ALL window names
-  for (const source of sources) {
-    // Skip "Entire Screen" entries as they're not actual windows
-    if (source.name.toLowerCase().includes('entire screen')) {
-      continue;
-    }
-    if (isSensitiveWindow({ title: source.name })) {
-      console.log('Sensitive window detected:', source.name);
-      return true;
-    }
-  }
-  return false;
-}
-
-const createWindow = async () => {
-  // Close any existing main windows first
-  BrowserWindow.getAllWindows().forEach(win => {
-    if (win !== trayWindow) {
-      win.close();
-    }
-  });
-
-  const { width: windowWidth, height: windowHeight } = getDefaultWindowBounds();
-  // Create main window with default dimensions
-  mainWindow = new BrowserWindow({
-    width: windowWidth,
-    height: windowHeight,
-    show: false,
-    titleBarStyle: 'hidden',
-    trafficLightPosition: {
-      x: 18,
-      y: 10,
-    },
-    webPreferences: {
-      allowRunningInsecureContent: false,
-      preload: app.isPackaged
-        ? path.join(__dirname, 'preload.js')
-        : path.join(__dirname, '../../.erb/dll/preload.js'),
-      partition: 'persist:main',
-      enableWebSQL: false,
-    },
-  });
-  attachUiScaling(mainWindow);
-
-  mainWindow.loadURL(resolveHtmlPath('index.html'));
-
-  // Create tray icon
-  const RESOURCES_PATH = app.isPackaged
-    ? path.join(process.resourcesPath, 'assets')
-    : path.join(__dirname, '../../assets');
-
-  const getAssetPath = (...paths: string[]): string => {
-    return path.join(RESOURCES_PATH, ...paths);
-  };
-
-  const icon = nativeImage.createFromPath(getAssetPath('icon.png'));
-  tray = new Tray(icon.resize({ width: 16, height: 16 }));
-
-  // Set dock icon on macOS using RelicDockPadded.png (properly sized with padding)
-  if (process.platform === 'darwin' && app.dock) {
-    const dockIcon = nativeImage.createFromPath(getAssetPath('RelicDockPadded.png'));
-    app.dock.setIcon(dockIcon);
-  }
-
-  tray.on('click', (event, bounds) => {
-    if (!trayWindow) {
-      createTrayWindow();
-    }
-
-    if (!trayWindow) return;
-
-    const trayBounds = bounds;
-    const windowBounds = trayWindow.getBounds();
-
-    // Position window above the tray icon
-    const yPosition =
-      process.platform === 'darwin'
-        ? trayBounds.y
-        : trayBounds.y - windowBounds.height;
-
-    const xPosition = Math.round(
-      trayBounds.x - windowBounds.width / 2 + trayBounds.width / 2,
-    );
-
-    trayWindow.setPosition(xPosition, yPosition);
-
-    if (trayWindow.isVisible()) {
-      trayWindow.hide();
-    } else {
-      trayWindow.show();
-      trayWindow.focus();
-    }
-  });
-
-  // Show main window when ready
-  mainWindow.on('ready-to-show', () => {
-    if (!mainWindow) {
-      throw new Error('"mainWindow" is not defined');
+    if (mainWindow.isMinimized()) {
+      mainWindow.restore();
     }
     mainWindow.show();
     mainWindow.focus();
   });
 
-  // Add IPC handlers
   ipcMain.handle('get-current-window-info', async () => {
     const cursorPosition = screen.getCursorScreenPoint();
     const cursorDisplay = screen.getDisplayNearestPoint(cursorPosition);
@@ -499,7 +593,7 @@ const createWindow = async () => {
   });
 
   ipcMain.handle('set-recording-status', (event, status) => {
-    isRecording = status;
+    isRecording = Boolean(status);
   });
 
   ipcMain.handle('take-screenshot', async () => {
@@ -511,7 +605,7 @@ const createWindow = async () => {
       thumbnailSize: { width, height },
     });
 
-    return sources[0].thumbnail.toDataURL();
+    return sources[0]?.thumbnail.toDataURL() || null;
   });
 
   ipcMain.handle('get-sources', async () => {
@@ -522,119 +616,15 @@ const createWindow = async () => {
     return sources;
   });
 
-  ipcMain.handle('check-sensitive-content', async (event, windowInfo) => {
+  ipcMain.handle('check-sensitive-content', async () => {
     const windows = await desktopCapturer.getSources({
       types: ['window', 'screen'],
       thumbnailSize: { width: 100, height: 100 },
     });
 
-    const hasSensitiveContent = windows.some((window) =>
+    return windows.some((window) =>
       isSensitiveWindow({ title: window.name }),
     );
-    return hasSensitiveContent;
-  });
-
-  // Track cursor position and window under cursor
-  let lastUpdate = 0;
-  const THROTTLE_MS = 100;
-
-  // Add this function to create a consistent notification
-  function showSensitiveContentNotification() {
-    const now = Date.now();
-    if (now - lastSensitiveNotification > NOTIFICATION_THROTTLE) {
-      new Notification({
-        title: 'Sensitive Content Detected',
-        body: 'Recording has been automatically paused to protect your privacy.',
-        urgency: 'critical',
-        silent: false,
-      }).show();
-      lastSensitiveNotification = now;
-    }
-  }
-
-  setInterval(async () => {
-    if (!mainWindow || !isRecording || isPaused) return;
-
-    const now = Date.now();
-    if (now - lastUpdate < THROTTLE_MS) return;
-
-    const cursorPosition = screen.getCursorScreenPoint();
-    const cursorDisplay = screen.getDisplayNearestPoint(cursorPosition);
-    const windowInfo = await getCurrentWindow();
-
-    // Check for sensitive content
-    if (isSensitiveWindow(windowInfo)) {
-      showSensitiveContentNotification();
-      // Pause recording instead of stopping
-      isPaused = true;
-      stateManager.pauseActiveSession();
-      mainWindow.webContents.send('recording-paused');
-      trayWindow?.webContents.send('recording-paused');
-    }
-
-    // Send cursor position update
-    mainWindow.webContents.send('cursor-moved', {
-      position: cursorPosition,
-      activeWindow: windowInfo,
-      display: {
-        id: cursorDisplay.id,
-        bounds: cursorDisplay.bounds,
-      },
-    });
-
-    lastUpdate = now;
-  }, THROTTLE_MS);
-
-  const menuBuilder = new MenuBuilder(mainWindow);
-  menuBuilder.buildMenu();
-
-  // Remove this if your app does not use auto updates
-  // eslint-disable-next-line
-  new AppUpdater();
-
-  ipcMain.handle('show-dashboard', () => {
-    const existingDashboard = BrowserWindow.getAllWindows().find((win) => {
-      const url = win.webContents.getURL();
-      return url.includes('dashboard=true');
-    });
-
-    if (existingDashboard) {
-      if (existingDashboard.isMinimized()) {
-        existingDashboard.restore();
-      }
-      existingDashboard.focus();
-      return;
-    }
-
-    createDashboardWindow();
-  });
-
-  ipcMain.handle('focus-main-window', () => {
-    if (mainWindow && !mainWindow.isDestroyed()) {
-      if (mainWindow.isMinimized()) {
-        mainWindow.restore();
-      }
-      mainWindow.show();
-      mainWindow.focus();
-    }
-  });
-
-  // Add this handler for window.open
-  mainWindow.webContents.setWindowOpenHandler(({ url, features }) => {
-    return {
-      action: 'allow',
-      overrideBrowserWindowOptions: {
-        frame: false,
-        titleBarStyle: 'hidden',
-        webPreferences: {
-          nodeIntegration: false,
-          contextIsolation: true,
-          preload: app.isPackaged
-            ? path.join(__dirname, 'preload.js')
-            : path.join(__dirname, '../../.erb/dll/preload.js'),
-        },
-      },
-    };
   });
 
   ipcMain.on('start-recording', async (event, sessionId) => {
@@ -652,16 +642,14 @@ const createWindow = async () => {
     isRecording = true;
     isPaused = false;
 
-    // Minimize all windows before starting recording
-    if (mainWindow?.isVisible() && !mainWindow?.isMinimized()) {
-      mainWindow?.minimize();
+    if (mainWindow?.isVisible() && !mainWindow.isMinimized()) {
+      mainWindow.minimize();
     }
-    if (trayWindow?.isVisible() && !trayWindow?.isMinimized()) {
-      trayWindow?.hide();
+    if (trayWindow?.isVisible() && !trayWindow.isMinimized()) {
+      trayWindow.hide();
     }
 
-    mainWindow?.webContents.send('start-recording', sessionId);
-    trayWindow?.webContents.send('start-recording', sessionId);
+    sendToRecordingWindows('start-recording', sessionId);
   });
 
   ipcMain.on('stop-recording', async () => {
@@ -672,31 +660,26 @@ const createWindow = async () => {
     if (sessionId && finalDuration !== null) {
       try {
         await dbHelpers.updateDuration(sessionId, finalDuration);
-        mainWindow?.webContents.send('stop-recording');
-        trayWindow?.webContents.send('stop-recording');
+        await flushSessionMetadataUpdate(sessionId);
+        sendToRecordingWindows('stop-recording');
       } catch (error) {
         console.error('Failed to update session duration:', error);
       }
     }
   });
 
-  // Add new IPC handlers for pause/resume
   ipcMain.on('pause-recording', () => {
-    if (isRecording && !isPaused) {
-      isPaused = true;
-      stateManager.pauseActiveSession();
-      mainWindow?.webContents.send('recording-paused');
-      trayWindow?.webContents.send('recording-paused');
-    }
+    if (!isRecording || isPaused) return;
+    isPaused = true;
+    stateManager.pauseActiveSession();
+    sendToRecordingWindows('recording-paused');
   });
 
   ipcMain.on('resume-recording', () => {
-    if (isRecording && isPaused) {
-      isPaused = false;
-      stateManager.resumeActiveSession();
-      mainWindow?.webContents.send('recording-resumed');
-      trayWindow?.webContents.send('recording-resumed');
-    }
+    if (!isRecording || !isPaused) return;
+    isPaused = false;
+    stateManager.resumeActiveSession();
+    sendToRecordingWindows('recording-resumed');
   });
 
   ipcMain.handle('get-active-session', () => {
@@ -710,13 +693,40 @@ const createWindow = async () => {
     return stateManager.getCurrentDuration();
   });
 
+  ipcMain.handle('delete-session', async (event, sessionId: number) => {
+    try {
+      // Delete from database
+      await dbHelpers.deleteSession(sessionId);
+      // Delete session folder and files
+      fileStorage.deleteSessionFolder(sessionId);
+      return true;
+    } catch (error) {
+      console.error('Failed to delete session:', error);
+      throw error;
+    }
+  });
+
+  ipcMain.handle('get-sessions', async () => {
+    try {
+      if (currentUserId) {
+        void syncSessionsIfNeeded(currentUserId);
+      }
+      return await dbHelpers.getAllSessions();
+    } catch (error) {
+      console.error('Error in get-sessions handler:', error);
+      // Fallback to local sessions on error
+      return dbHelpers.getAllSessions();
+    }
+  });
+
   ipcMain.handle(
     'create-session',
     async (event, sessionType: 'passive' | 'tasked', taskId?: number) => {
       try {
-        console.log('Creating new session:', { sessionType, taskId });
-        const sessionId = await dbHelpers.createSession(sessionType, taskId);
-        console.log('Session created with ID:', sessionId);
+        const sessionId = await dbHelpers.createSession(
+          sessionType,
+          taskId ?? null,
+        );
         return sessionId;
       } catch (error) {
         console.error('Failed to create session:', error);
@@ -734,7 +744,6 @@ const createWindow = async () => {
 
   ipcMain.handle('submit-session', async (event, sessionId: number) => {
     try {
-      // 1. Get authenticated user
       const userResult = await getCurrentUser();
       if (!userResult.success || !userResult.user) {
         return {
@@ -743,17 +752,14 @@ const createWindow = async () => {
         };
       }
 
-      // 2. Create progress callback to send updates to renderer
       const progressCallback = createProgressCallback(event.sender);
 
-      // 3. Upload session to Supabase
       const result = await submitSessionToSupabase(
         userResult.user.id,
         sessionId,
-        progressCallback
+        progressCallback,
       );
 
-      // 4. Update local status if successful
       if (result.success) {
         await dbHelpers.submitForApproval(sessionId);
       }
@@ -768,12 +774,9 @@ const createWindow = async () => {
     }
   });
 
-  // Migration handlers
   ipcMain.handle('migrate-recordings', async () => {
     try {
-      console.log('Starting migration of recordings to file-based storage...');
       const result = await migration.migrateRecordingsToFiles();
-      console.log('Migration result:', result);
       return result;
     } catch (error: any) {
       console.error('Migration error:', error);
@@ -781,16 +784,16 @@ const createWindow = async () => {
         success: false,
         migrated: 0,
         failed: 0,
-        errors: [{ recordingId: -1, error: error.message || 'Unknown error' }],
+        errors: [
+          { recordingId: -1, error: error.message || 'Unknown error' },
+        ],
       };
     }
   });
 
   ipcMain.handle('verify-migration', async () => {
     try {
-      console.log('Verifying migration...');
       const result = await migration.verifyMigration();
-      console.log('Verification result:', result);
       return result;
     } catch (error: any) {
       console.error('Verification error:', error);
@@ -806,9 +809,7 @@ const createWindow = async () => {
 
   ipcMain.handle('cleanup-legacy-data', async () => {
     try {
-      console.log('Cleaning up legacy Base64 data...');
       const result = await migration.cleanupLegacyBase64Data();
-      console.log('Cleanup result:', result);
       return result;
     } catch (error: any) {
       console.error('Cleanup error:', error);
@@ -830,19 +831,19 @@ const createWindow = async () => {
 
   ipcMain.handle('start-task', (event, taskId: number) => {
     try {
-      if (trayWindow) {
-        // If tray window exists, show it and send the task
+      if (trayWindow && !trayWindow.isDestroyed()) {
         trayWindow.webContents.send('open-task', taskId);
         trayWindow.show();
         trayWindow.focus();
-      } else {
-        // If tray window doesn't exist, create it
-        const window = createTrayWindow();
-        // Wait for window to load before sending the task
-        window.webContents.on('did-finish-load', () => {
-          window.webContents.send('open-task', taskId);
-        });
+        return;
       }
+
+      const win = createTrayWindow();
+      win.webContents.once('did-finish-load', () => {
+        win.webContents.send('open-task', taskId);
+        win.show();
+        win.focus();
+      });
     } catch (error) {
       console.error('Failed to start task:', error);
       throw error;
@@ -851,16 +852,13 @@ const createWindow = async () => {
 
   ipcMain.handle('start-passive-mode', () => {
     try {
-      if (!trayWindow) {
-        createTrayWindow();
-      }
+      ensureTray();
+      if (!tray) return;
 
-      if (trayWindow && tray) {
-        // Position the tray window near the tray icon
+      const applyPassiveMode = (win: BrowserWindow) => {
         const trayBounds = tray.getBounds();
-        const windowBounds = trayWindow.getBounds();
+        const windowBounds = win.getBounds();
 
-        // Position window above/below the tray icon depending on platform
         const yPosition =
           process.platform === 'darwin'
             ? trayBounds.y
@@ -870,98 +868,94 @@ const createWindow = async () => {
           trayBounds.x - windowBounds.width / 2 + trayBounds.width / 2,
         );
 
-        trayWindow.setPosition(xPosition, yPosition);
-        trayWindow.show();
-        trayWindow.focus();
-        trayWindow.webContents.send('set-mode', 'passive');
+        win.setPosition(xPosition, yPosition);
+        win.show();
+        win.focus();
+        win.webContents.send('set-mode', 'passive');
+      };
+
+      if (trayWindow && !trayWindow.isDestroyed()) {
+        applyPassiveMode(trayWindow);
+        return;
       }
+
+      const win = createTrayWindow();
+      win.webContents.once('did-finish-load', () => applyPassiveMode(win));
     } catch (error) {
       console.error('Failed to start passive mode:', error);
       throw error;
     }
   });
 
-  // Add caching for desktopCapturer sources
-  let sourceCache: {
-    timestamp: number;
-    sources: Electron.DesktopCapturerSource[];
-  } | null = null;
+  ipcMain.handle('open-tracker', (event, mode: 'passive' | 'tasks') => {
+    try {
+      const applyTrackerMode = (win: BrowserWindow) => {
+        const display = screen.getPrimaryDisplay();
+        const { width } = win.getBounds();
 
-  const SOURCE_CACHE_TTL = 1000; // 1 second cache
+        const x = display.bounds.width - width - 20;
+        const y = 40;
 
-  async function getCachedSources(thumbnailSize: {
-    width: number;
-    height: number;
-  }) {
-    const now = Date.now();
-    if (sourceCache && now - sourceCache.timestamp < SOURCE_CACHE_TTL) {
-      return sourceCache.sources;
+        win.setPosition(x, y);
+        win.webContents.send('set-mode', mode);
+        win.show();
+        win.focus();
+      };
+
+      if (trayWindow && !trayWindow.isDestroyed()) {
+        applyTrackerMode(trayWindow);
+        return;
+      }
+
+      const win = createTrayWindow();
+      win.webContents.once('did-finish-load', () => applyTrackerMode(win));
+    } catch (error) {
+      console.error('Failed to open tracker:', error);
+      throw error;
     }
+  });
 
-    const sources = await desktopCapturer.getSources({
-      types: ['window', 'screen'],
-      thumbnailSize,
-    });
-
-    sourceCache = {
-      timestamp: now,
-      sources,
-    };
-
-    return sources;
-  }
-
-  // Simplified capture-window handler - reliably captures 1 screenshot per call
   ipcMain.handle(
     'capture-window',
     async (event, sourceId: string, sourceType: 'window' | 'screen') => {
       try {
-        console.log(`[CAPTURE] Starting capture: sourceId=${sourceId}, sourceType=${sourceType}`);
-
         const sources = await desktopCapturer.getSources({
           types: ['window', 'screen'],
           thumbnailSize: { width: 1920, height: 1080 },
         });
 
-        // Find the source - try multiple matching strategies
         let source = sources.find((s) => s.id === sourceId);
 
-        // If not found by exact ID, try other matching methods for screens
         if (!source && sourceType === 'screen') {
-          source = sources.find((s) =>
-            s.id.startsWith('screen:') && (
-              s.display_id?.toString() === sourceId ||
-              s.display_id?.toString() === sourceId.replace('screen:', '').split(':')[0]
-            )
+          source = sources.find(
+            (s) =>
+              s.id.startsWith('screen:') &&
+              (s.display_id?.toString() === sourceId ||
+                s.display_id?.toString() ===
+                  sourceId.replace('screen:', '').split(':')[0]),
           );
 
-          // Fallback: just use the first screen source
           if (!source) {
             source = sources.find((s) => s.id.startsWith('screen:'));
-            console.log('[CAPTURE] Using fallback screen source:', source?.id);
           }
         }
 
-        if (!source) {
-          console.error('[CAPTURE] No source found. Available:', sources.map(s => s.id));
+        if (!source) return null;
+
+        const size = source.thumbnail.getSize();
+        if (!size || size.width === 0 || size.height === 0) {
           return null;
         }
 
-        console.log(`[CAPTURE] Found source: ${source.id} (${source.name})`);
-
-        // Check if thumbnail is valid
-        const thumbnailSize = source.thumbnail.getSize();
-        if (!thumbnailSize || thumbnailSize.width === 0 || thumbnailSize.height === 0) {
-          console.warn('[CAPTURE] Empty thumbnail - Screen Recording permission may not be granted');
-          return null;
-        }
-
+        const thumbnailWidth = 300;
+        const thumbnailHeight = Math.max(
+          1,
+          Math.round((size.height / size.width) * thumbnailWidth),
+        );
         const thumbnail = source.thumbnail.resize({
-          width: 300,
-          height: Math.round(300 * source.thumbnail.getAspectRatio()),
+          width: thumbnailWidth,
+          height: thumbnailHeight,
         });
-
-        console.log(`[CAPTURE] Success: ${thumbnailSize.width}x${thumbnailSize.height}`);
 
         return {
           windowId: source.id,
@@ -979,45 +973,28 @@ const createWindow = async () => {
 
   ipcMain.handle('save-recording', async (event, recording) => {
     try {
-      console.log('Saving recording:', {
-        session_id: recording.session_id,
-        window_name: recording.window_name,
-        timestamp: recording.timestamp,
+      // Insert DB row first to get a stable recording ID, then write the screenshot to disk.
+      const recordingId = await dbHelpers.createRecording({
+        ...recording,
+        screenshot: '',
+        screenshot_path: null,
       });
 
-      // Save screenshot as PNG file
       const screenshotPath = fileStorage.saveScreenshot(
         recording.session_id,
-        Date.now(), // Use timestamp as temp ID
-        recording.screenshot
+        recordingId,
+        recording.screenshot,
       );
+      await dbHelpers.updateRecordingScreenshotPath(recordingId, screenshotPath);
 
-      // Add screenshot path to recording data
-      const recordingData = {
-        ...recording,
-        screenshot_path: screenshotPath,
-      };
+      scheduleSessionMetadataUpdate(recording.session_id);
 
-      const result = await dbHelpers.createRecording(recordingData);
-
-      // Update metadata files
-      await fileStorage.updateSessionMetadata(
-        recording.session_id,
-        dbHelpers.getSession,
-        dbHelpers.getSessionRecordings,
-        dbHelpers.getSessionComments
-      );
-
-      // Notify all windows about the new recording
-      BrowserWindow.getAllWindows().forEach((window) => {
-        window.webContents.send('new-recording', {
-          sessionId: recording.session_id,
-          recordingId: result,
-        });
+      sendToAllWindows('new-recording', {
+        sessionId: recording.session_id,
+        recordingId,
       });
 
-      console.log('Recording saved successfully:', result);
-      return result;
+      return recordingId;
     } catch (error) {
       console.error('Failed to save recording:', error);
       throw error;
@@ -1025,108 +1002,67 @@ const createWindow = async () => {
   });
 
   ipcMain.handle('get-session-recordings', async (event, sessionId: number) => {
-    const recordings = await dbHelpers.getSessionRecordings(sessionId);
-
-    // Load images from files if screenshot_path exists
-    return recordings.map((recording) => {
-      if (recording.screenshot_path) {
-        const screenshot = fileStorage.readScreenshot(recording.screenshot_path);
-        return {
-          ...recording,
-          screenshot: screenshot || recording.screenshot,
-          thumbnail: screenshot || recording.thumbnail,
-        };
-      }
-      return recording;
-    });
+    return getSessionRecordingsWithImages(sessionId);
   });
 
   ipcMain.handle('show-editor', async (event, sessionId: number) => {
     try {
-      // Get the recordings for this session
-      const recordings = await dbHelpers.getSessionRecordings(sessionId);
+      const recordings = await getSessionRecordingsWithImages(sessionId);
 
-      // Hide tray window if it's visible
       if (trayWindow && !trayWindow.isDestroyed()) {
         trayWindow.hide();
       }
 
-      // Find any existing editor windows (exclude tray window)
-      const existingEditorWindow = BrowserWindow.getAllWindows().find(win => {
+      const existingEditorWindow = BrowserWindow.getAllWindows().find((win) => {
         const url = win.webContents.getURL();
-        return url.includes('index.html') && !url.includes('tray=true') && !win.isDestroyed() && win !== trayWindow;
+        return (
+          url.includes('index.html') &&
+          !url.includes('tray=true') &&
+          !win.isDestroyed() &&
+          win !== trayWindow
+        );
       });
 
       if (existingEditorWindow) {
-        // Reuse existing window
         if (existingEditorWindow.isMinimized()) {
           existingEditorWindow.restore();
         }
         existingEditorWindow.show();
         existingEditorWindow.focus();
-        // Wait for the component to mount and set up listeners
         setTimeout(() => {
-          existingEditorWindow.webContents.send('load-editor', { sessionId, recordings });
+          existingEditorWindow.webContents.send('load-editor', {
+            sessionId,
+            recordings,
+          });
         }, 150);
-      } else {
-        // Create new window only if none exists
-        if (!mainWindow || mainWindow.isDestroyed()) {
-          await createWindow();
-        }
-
-        if (mainWindow) {
-          mainWindow.show();
-          mainWindow.focus();
-          // Wait for the component to mount and set up listeners
-          setTimeout(() => {
-            if (mainWindow && !mainWindow.isDestroyed()) {
-              mainWindow.webContents.send('load-editor', { sessionId, recordings });
-            }
-          }, 150);
-        }
+        return;
       }
+
+      const win = await ensureMainWindow();
+      if (!win || win.isDestroyed()) return;
+
+      win.show();
+      win.focus();
+      setTimeout(() => {
+        if (win.isDestroyed()) return;
+        win.webContents.send('load-editor', { sessionId, recordings });
+      }, 150);
     } catch (error) {
       console.error('Failed to show editor:', error);
       throw error;
     }
   });
 
-  ipcMain.handle('open-tracker', (event, mode: 'passive' | 'tasks') => {
-    try {
-      if (trayWindow) {
-        // If tray window exists, show it and set the mode
-        const display = screen.getPrimaryDisplay();
-        const { width, height } = trayWindow.getBounds();
-
-        // Position near the top-right corner of the screen
-        const x = display.bounds.width - width - 20;
-        const y = 40; // Leave space for the menu bar
-
-        trayWindow.setPosition(x, y);
-        trayWindow.webContents.send('set-mode', mode);
-        trayWindow.show();
-        trayWindow.focus();
-      } else {
-        // If tray window doesn't exist, create it
-        const window = createTrayWindow();
-        // Wait for window to load before setting the mode
-        window.webContents.on('did-finish-load', () => {
-          window.webContents.send('set-mode', mode);
-        });
-      }
-    } catch (error) {
-      console.error('Failed to open tracker:', error);
-      throw error;
-    }
-  });
-
-  // Add handler for deleting individual recordings
   ipcMain.handle(
     'delete-recording',
     async (event, { sessionId, recordingId }) => {
       try {
-        // Delete the recording from the database
+        const recording = await dbHelpers.getRecordingById(recordingId);
         await dbHelpers.deleteRecording(sessionId, recordingId);
+        if (recording?.screenshot_path) {
+          fileStorage.deleteScreenshotFile(recording.screenshot_path);
+        }
+        scheduleSessionMetadataUpdate(sessionId);
         return true;
       } catch (error) {
         console.error('Failed to delete recording:', error);
@@ -1135,12 +1071,15 @@ const createWindow = async () => {
     },
   );
 
-  // Add handler for updating recording labels
   ipcMain.handle(
     'update-recording-label',
     async (event, { recordingId, label }) => {
       try {
         await dbHelpers.updateRecordingLabel(recordingId, label);
+        const recording = await dbHelpers.getRecordingById(recordingId);
+        if (recording?.session_id) {
+          scheduleSessionMetadataUpdate(recording.session_id);
+        }
         return true;
       } catch (error) {
         console.error('Failed to update recording label:', error);
@@ -1149,7 +1088,6 @@ const createWindow = async () => {
     },
   );
 
-  // Add handlers for notifications
   ipcMain.on('show-success-notification', (event, { title, message }) => {
     new Notification({
       title,
@@ -1170,6 +1108,7 @@ const createWindow = async () => {
   ipcMain.handle('create-comment', async (event, comment: TimeRangeComment) => {
     try {
       const result = await dbHelpers.createComment(comment);
+      scheduleSessionMetadataUpdate(comment.session_id);
       return result;
     } catch (error) {
       console.error('Failed to create comment:', error);
@@ -1179,7 +1118,11 @@ const createWindow = async () => {
 
   ipcMain.handle('delete-comment', async (event, commentId: number) => {
     try {
+      const comment = await dbHelpers.getCommentById(commentId);
       await dbHelpers.deleteComment(commentId);
+      if (comment?.session_id) {
+        scheduleSessionMetadataUpdate(comment.session_id);
+      }
       return true;
     } catch (error) {
       console.error('Failed to delete comment:', error);
@@ -1187,15 +1130,26 @@ const createWindow = async () => {
     }
   });
 
-  ipcMain.handle('update-comment', async (event, commentId: number, updatedComment: Partial<TimeRangeComment>) => {
-    try {
-      await dbHelpers.updateComment(commentId, updatedComment);
-      return true;
-    } catch (error) {
-      console.error('Failed to update comment:', error);
-      throw error;
-    }
-  });
+  ipcMain.handle(
+    'update-comment',
+    async (
+      event,
+      commentId: number,
+      updatedComment: Partial<TimeRangeComment>,
+    ) => {
+      try {
+        const comment = await dbHelpers.getCommentById(commentId);
+        await dbHelpers.updateComment(commentId, updatedComment);
+        if (comment?.session_id) {
+          scheduleSessionMetadataUpdate(comment.session_id);
+        }
+        return true;
+      } catch (error) {
+        console.error('Failed to update comment:', error);
+        throw error;
+      }
+    },
+  );
 
   ipcMain.handle('get-session-comments', async (event, sessionId: number) => {
     try {
@@ -1207,23 +1161,12 @@ const createWindow = async () => {
     }
   });
 
-  // Authentication handlers
-  const {
-    signUp,
-    signIn,
-    signOut,
-    getCurrentUser,
-    getCurrentSession,
-    resetPassword,
-    updatePassword,
-    getUserProfile,
-    updateUserProfile,
-    updateUserPoints,
-  } = require('./auth');
-
   ipcMain.handle('auth:sign-up', async (event, params) => {
     try {
       const result = await signUp(params);
+      if (result.success && result.user) {
+        currentUserId = result.user.id;
+      }
       return result;
     } catch (error: any) {
       console.error('Failed to sign up:', error);
@@ -1235,15 +1178,13 @@ const createWindow = async () => {
     try {
       const result = await signIn(params);
 
-      // If sign-in successful, sync user's sessions from Supabase
       if (result.success && result.user) {
-        console.log('Sign-in successful, syncing sessions...');
+        currentUserId = result.user.id;
         try {
           await syncAllSessionsToLocal(result.user.id);
-          console.log('Sessions synced successfully');
+          lastSessionsSyncAt = Date.now();
         } catch (syncError) {
           console.error('Failed to sync sessions after login:', syncError);
-          // Don't fail the login if sync fails
         }
       }
 
@@ -1257,6 +1198,7 @@ const createWindow = async () => {
   ipcMain.handle('auth:sign-out', async () => {
     try {
       const result = await signOut();
+      currentUserId = null;
       return result;
     } catch (error: any) {
       console.error('Failed to sign out:', error);
@@ -1267,6 +1209,11 @@ const createWindow = async () => {
   ipcMain.handle('auth:get-current-user', async () => {
     try {
       const result = await getCurrentUser();
+      if (result.success && result.user) {
+        currentUserId = result.user.id;
+      } else {
+        currentUserId = null;
+      }
       return result;
     } catch (error: any) {
       console.error('Failed to get current user:', error);
@@ -1277,6 +1224,9 @@ const createWindow = async () => {
   ipcMain.handle('auth:get-current-session', async () => {
     try {
       const result = await getCurrentSession();
+      if (result.success && result.session?.user?.id) {
+        currentUserId = result.session.user.id;
+      }
       return result;
     } catch (error: any) {
       console.error('Failed to get current session:', error);
@@ -1294,15 +1244,18 @@ const createWindow = async () => {
     }
   });
 
-  ipcMain.handle('auth:update-password', async (event, newPassword: string) => {
-    try {
-      const result = await updatePassword(newPassword);
-      return result;
-    } catch (error: any) {
-      console.error('Failed to update password:', error);
-      return { success: false, error: error.message };
-    }
-  });
+  ipcMain.handle(
+    'auth:update-password',
+    async (event, newPassword: string) => {
+      try {
+        const result = await updatePassword(newPassword);
+        return result;
+      } catch (error: any) {
+        console.error('Failed to update password:', error);
+        return { success: false, error: error.message };
+      }
+    },
+  );
 
   ipcMain.handle('auth:get-profile', async (event, userId: string) => {
     try {
@@ -1324,7 +1277,6 @@ const createWindow = async () => {
     }
   });
 
-  // Points handler
   ipcMain.handle('get-user-points', async (event, userId: string) => {
     try {
       const result = await getUserProfile(userId);
@@ -1337,9 +1289,6 @@ const createWindow = async () => {
       return { success: false, error: error.message };
     }
   });
-
-  // Notification handlers
-  const { supabase } = require('./supabase');
 
   ipcMain.handle('get-notifications', async (event, userId: string) => {
     try {
@@ -1361,24 +1310,27 @@ const createWindow = async () => {
     }
   });
 
-  ipcMain.handle('mark-notification-read', async (event, notificationId: string) => {
-    try {
-      const { error } = await supabase
-        .from('notifications')
-        .update({ read: true })
-        .eq('id', notificationId);
+  ipcMain.handle(
+    'mark-notification-read',
+    async (event, notificationId: string) => {
+      try {
+        const { error } = await supabase
+          .from('notifications')
+          .update({ read: true })
+          .eq('id', notificationId);
 
-      if (error) {
+        if (error) {
+          console.error('Failed to mark notification as read:', error);
+          return { success: false, error: error.message };
+        }
+
+        return { success: true };
+      } catch (error: any) {
         console.error('Failed to mark notification as read:', error);
         return { success: false, error: error.message };
       }
-
-      return { success: true };
-    } catch (error: any) {
-      console.error('Failed to mark notification as read:', error);
-      return { success: false, error: error.message };
-    }
-  });
+    },
+  );
 
   ipcMain.handle('clear-all-notifications', async (event, userId: string) => {
     try {
@@ -1398,6 +1350,117 @@ const createWindow = async () => {
       return { success: false, error: error.message };
     }
   });
+}
+
+const ensureTray = () => {
+  if (tray) return;
+
+  const trayIcon = nativeImage.createFromPath(getAssetPath('icon.png'));
+  tray = new Tray(trayIcon.resize({ width: 16, height: 16 }));
+
+  // Set dock icon on macOS using RelicDockPadded.png (properly sized with padding)
+  if (process.platform === 'darwin' && app.dock) {
+    const dockIcon = nativeImage.createFromPath(getAssetPath('RelicDockPadded.png'));
+    app.dock.setIcon(dockIcon);
+  }
+
+  tray.on('click', (_event, bounds) => {
+    if (!trayWindow) {
+      createTrayWindow();
+    }
+
+    if (!trayWindow) return;
+
+    const windowBounds = trayWindow.getBounds();
+
+    // Position window above the tray icon
+    const yPosition =
+      process.platform === 'darwin'
+        ? bounds.y
+        : bounds.y - windowBounds.height;
+
+    const xPosition = Math.round(bounds.x - windowBounds.width / 2 + bounds.width / 2);
+
+    trayWindow.setPosition(xPosition, yPosition);
+
+    if (trayWindow.isVisible()) {
+      trayWindow.hide();
+    } else {
+      trayWindow.show();
+      trayWindow.focus();
+    }
+  });
+};
+
+const createWindow = async () => {
+  // Close any existing main windows first
+  BrowserWindow.getAllWindows().forEach((win) => {
+    if (win !== trayWindow) {
+      win.close();
+    }
+  });
+
+  const { width, height } = getDefaultWindowBounds();
+
+  mainWindow = new BrowserWindow({
+    width,
+    height,
+    show: false,
+    titleBarStyle: 'hidden',
+    trafficLightPosition: {
+      x: 18,
+      y: 10,
+    },
+    webPreferences: {
+      allowRunningInsecureContent: false,
+      preload: getPreloadScriptPath(),
+      partition: 'persist:main',
+      enableWebSQL: false,
+    },
+  });
+  attachUiScaling(mainWindow);
+
+  mainWindow.loadURL(resolveHtmlPath('index.html'));
+
+  // Show main window when ready
+  mainWindow.on('ready-to-show', () => {
+    if (!mainWindow || mainWindow.isDestroyed()) return;
+    mainWindow.show();
+    mainWindow.focus();
+  });
+
+  mainWindow.on('closed', () => {
+    mainWindow = null;
+  });
+
+  // Add this handler for window.open
+  mainWindow.webContents.setWindowOpenHandler(() => {
+    return {
+      action: 'allow',
+      overrideBrowserWindowOptions: {
+        frame: false,
+        titleBarStyle: 'hidden',
+        webPreferences: {
+          nodeIntegration: false,
+          contextIsolation: true,
+          preload: getPreloadScriptPath(),
+        },
+      },
+    };
+  });
+
+  ensureTray();
+
+  const menuBuilder = new MenuBuilder(mainWindow);
+  menuBuilder.buildMenu();
+
+  ensureCursorMonitorStarted();
+
+  if (!appUpdaterInitialized) {
+    appUpdaterInitialized = true;
+    // eslint-disable-next-line no-new
+    new AppUpdater();
+  }
 };
 
 /**
@@ -1421,6 +1484,16 @@ app
     registerIpcHandlers();
     createWindow();
 
+    void (async () => {
+      const userResult = await getCurrentUser();
+      if (userResult.success && userResult.user) {
+        currentUserId = userResult.user.id;
+        void syncSessionsIfNeeded(userResult.user.id);
+      } else {
+        currentUserId = null;
+      }
+    })();
+
     app.on('activate', () => {
       if (tray === null) {
         createWindow();
@@ -1430,68 +1503,10 @@ app
   .catch(console.log);
 
 app.on('before-quit', () => {
+  stopCursorMonitor();
+  metadataUpdateTimers.forEach((timer) => clearTimeout(timer));
+  metadataUpdateTimers.clear();
   if (tray) {
     tray.destroy();
   }
-});
-// Add a new handler for getting all displays
-ipcMain.handle('get-displays', async () => {
-  // Get screen sources from desktopCapturer to get the actual source IDs
-  const sources = await desktopCapturer.getSources({
-    types: ['screen'],
-    thumbnailSize: { width: 150, height: 150 },
-  });
-
-  // Get display info from Electron's screen API
-  const displays = screen.getAllDisplays();
-
-  console.log('Screen sources:', sources.map(s => ({ id: s.id, name: s.name, display_id: s.display_id })));
-  console.log('System displays:', displays.map(d => ({ id: d.id, label: d.label, bounds: d.bounds })));
-
-  // Map displays to include screen source IDs
-  return displays.map((display, index) => {
-    // Try to match by display_id first, then by index
-    const matchingSource = sources.find(s => s.display_id?.toString() === display.id.toString()) ||
-                           sources[index];
-
-    return {
-      id: display.id.toString(),
-      name: display.label || `Display ${display.id}`,
-      resolution: `${display.size.width}x${display.size.height}`,
-      screenSourceId: matchingSource?.id || `screen:${index}:0`,
-    };
-  });
-});
-
-// Add IPC handler for opening tray window
-ipcMain.handle('open-tray-window', (event, bounds) => {
-  if (!trayWindow) {
-    createTrayWindow();
-  }
-
-  if (!trayWindow) return;
-
-  const windowBounds = trayWindow.getBounds();
-
-  // Position relative to the clicked button if bounds are provided
-  if (bounds) {
-    const yPosition = bounds.y - windowBounds.height;
-    const xPosition = Math.round(
-      bounds.x - windowBounds.width / 2 + bounds.width / 2,
-    );
-    trayWindow.setPosition(xPosition, yPosition);
-  }
-
-  trayWindow.show();
-  trayWindow.focus();
-});
-
-// Add IPC handler for theme changes
-ipcMain.handle('set-theme', (event, theme: 'light' | 'dark') => {
-  nativeTheme.themeSource = theme;
-
-  // Broadcast theme change to all windows
-  BrowserWindow.getAllWindows().forEach((window) => {
-    window.webContents.send('theme-changed', theme);
-  });
 });

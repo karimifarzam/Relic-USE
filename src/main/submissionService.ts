@@ -22,20 +22,16 @@ interface UploadProgress {
 }
 
 /**
- * Convert Base64 string to Blob for upload
+ * Convert a PNG payload to a Blob for upload.
+ * Accepts either a data URL (`data:image/...;base64,`) or a raw Buffer.
  */
-function base64ToBlob(base64: string): Blob {
-  // Remove data URL prefix if present
-  const base64Data = base64.replace(/^data:image\/\w+;base64,/, '');
-  const byteCharacters = atob(base64Data);
-  const byteNumbers = new Array(byteCharacters.length);
+function pngToBlob(png: string | Buffer): Blob {
+  const buffer =
+    typeof png === 'string'
+      ? Buffer.from(png.replace(/^data:image\/\w+;base64,/, ''), 'base64')
+      : png;
 
-  for (let i = 0; i < byteCharacters.length; i++) {
-    byteNumbers[i] = byteCharacters.charCodeAt(i);
-  }
-
-  const byteArray = new Uint8Array(byteNumbers);
-  return new Blob([byteArray], { type: 'image/png' });
+  return new Blob([buffer], { type: 'image/png' });
 }
 
 /**
@@ -46,12 +42,12 @@ function base64ToBlob(base64: string): Blob {
  * @returns Public URL of uploaded image or null on failure
  */
 async function uploadImageToStorage(
-  base64Image: string,
+  png: string | Buffer,
   bucket: string,
   path: string
 ): Promise<string | null> {
   try {
-    const blob = base64ToBlob(base64Image);
+    const blob = pngToBlob(png);
 
     const { data, error } = await supabase.storage
       .from(bucket)
@@ -81,13 +77,13 @@ async function uploadImageToStorage(
  * Upload image with retry logic
  */
 async function uploadImageWithRetry(
-  base64Image: string,
+  png: string | Buffer,
   bucket: string,
   path: string,
   maxRetries: number = 3
 ): Promise<string | null> {
   for (let attempt = 1; attempt <= maxRetries; attempt++) {
-    const url = await uploadImageToStorage(base64Image, bucket, path);
+    const url = await uploadImageToStorage(png, bucket, path);
     if (url) return url;
 
     if (attempt < maxRetries) {
@@ -272,11 +268,16 @@ export async function submitSessionToSupabase(
     let uploadedCount = 0;
 
     for (const recording of recordings) {
-      // Get screenshot data from file or fallback to Base64
-      let screenshotData: string;
+      // Prefer reading from disk (file-based storage), fall back to legacy Base64 if needed.
+      let screenshotData: string | Buffer;
       if (recording.screenshot_path) {
-        const fileData = fileStorage.readScreenshot(recording.screenshot_path);
-        screenshotData = fileData || recording.screenshot;
+        const fileBuffer = fileStorage.readScreenshotBuffer(recording.screenshot_path);
+        if (fileBuffer) {
+          screenshotData = fileBuffer;
+        } else {
+          const fileDataUrl = fileStorage.readScreenshot(recording.screenshot_path);
+          screenshotData = fileDataUrl || recording.screenshot;
+        }
       } else {
         screenshotData = recording.screenshot;
       }

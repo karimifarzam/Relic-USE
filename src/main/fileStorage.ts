@@ -1,4 +1,4 @@
-import { app } from 'electron';
+import { app, nativeImage } from 'electron';
 import * as fs from 'fs';
 import * as path from 'path';
 
@@ -9,11 +9,22 @@ const screenshotCache = new Map<
   { data: string; mtimeMs: number; lastAccess: number }
 >();
 
+const THUMBNAIL_CACHE_MAX = 200;
+const thumbnailCache = new Map<string, { data: string; mtimeMs: number }>();
+
 function trimScreenshotCache() {
   while (screenshotCache.size > SCREENSHOT_CACHE_MAX) {
     const oldestKey = screenshotCache.keys().next().value as string | undefined;
     if (!oldestKey) return;
     screenshotCache.delete(oldestKey);
+  }
+}
+
+function trimThumbnailCache() {
+  while (thumbnailCache.size > THUMBNAIL_CACHE_MAX) {
+    const oldestKey = thumbnailCache.keys().next().value as string | undefined;
+    if (!oldestKey) return;
+    thumbnailCache.delete(oldestKey);
   }
 }
 
@@ -104,6 +115,66 @@ export function readScreenshot(filePath: string): string | null {
   } catch (error) {
     console.error('Error reading screenshot:', error);
     return null;
+  }
+}
+
+export function readThumbnail(filePath: string, width = 300): string | null {
+  try {
+    if (!fs.existsSync(filePath)) {
+      return null;
+    }
+
+    const stats = fs.statSync(filePath);
+    const cacheKey = `${filePath}::w${width}`;
+    const cached = thumbnailCache.get(cacheKey);
+
+    if (cached && cached.mtimeMs === stats.mtimeMs) {
+      // Refresh LRU order
+      thumbnailCache.delete(cacheKey);
+      thumbnailCache.set(cacheKey, cached);
+      return cached.data;
+    }
+
+    const imageBuffer = fs.readFileSync(filePath);
+    const image = nativeImage.createFromBuffer(imageBuffer);
+    const size = image.getSize();
+    if (!size || size.width === 0 || size.height === 0) {
+      return null;
+    }
+
+    const height = Math.max(1, Math.round((size.height / size.width) * width));
+    const thumbnail = image.resize({ width, height });
+    const dataUrl = thumbnail.toDataURL();
+
+    thumbnailCache.set(cacheKey, { data: dataUrl, mtimeMs: stats.mtimeMs });
+    trimThumbnailCache();
+
+    return dataUrl;
+  } catch (error) {
+    console.error('Error reading thumbnail:', error);
+    return null;
+  }
+}
+
+export function readScreenshotBuffer(filePath: string): Buffer | null {
+  try {
+    if (!fs.existsSync(filePath)) {
+      return null;
+    }
+    return fs.readFileSync(filePath);
+  } catch (error) {
+    console.error('Error reading screenshot buffer:', error);
+    return null;
+  }
+}
+
+export function deleteScreenshotFile(filePath: string): void {
+  try {
+    screenshotCache.delete(filePath);
+    thumbnailCache.delete(`${filePath}::w300`);
+    fs.rmSync(filePath, { force: true });
+  } catch (error) {
+    console.error('Error deleting screenshot file:', error);
   }
 }
 

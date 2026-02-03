@@ -97,6 +97,35 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
       if (result.success && result.session) {
         setSession(result.session);
         setUser(result.session.user);
+      } else {
+        // DEBUG: Auto-login with demo user for testing
+        const demoUser: User = {
+          id: 'demo-user-001',
+          email: 'demo@relic.app',
+          user_metadata: {
+            username: 'demo_user',
+            display_name: 'Demo User',
+          },
+        };
+        const demoSession: Session = {
+          access_token: 'demo-access-token',
+          refresh_token: 'demo-refresh-token',
+          expires_at: Date.now() + 86400000,
+          user: demoUser,
+        };
+        setUser(demoUser);
+        setSession(demoSession);
+        setProfile({
+          id: 'demo-user-001',
+          username: 'demo_user',
+          display_name: 'Demo User',
+          points_earned: 1250,
+          referral_code: 'DEMO2024',
+          referred_by: null,
+          referral_count: 3,
+          created_at: new Date().toISOString(),
+          updated_at: new Date().toISOString(),
+        });
       }
     } catch (error) {
       console.error('Failed to check session:', error);

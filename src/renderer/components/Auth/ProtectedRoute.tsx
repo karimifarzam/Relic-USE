@@ -4,7 +4,7 @@ import { useAuth } from '../../contexts/AuthContext';
 import { useTheme } from '../../contexts/ThemeContext';
 
 // DEBUG: Set to true to skip authentication
-const DEBUG_SKIP_AUTH = true;
+const DEBUG_SKIP_AUTH = false;
 
 interface ProtectedRouteProps {
   children: ReactNode;

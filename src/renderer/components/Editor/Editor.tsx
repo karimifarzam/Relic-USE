@@ -731,6 +731,8 @@ function Editor() {
   const [comments, setComments] = useState<TimeRangeComment[]>([]);
   const [selectedIndices, setSelectedIndices] = useState<number[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
+  const timelineScrollRef = useRef<HTMLDivElement>(null);
+  const [timelineViewportWidth, setTimelineViewportWidth] = useState(0);
   // Controls the per-clip width in the timeline (smaller = more clips visible).
   const [timelineZoom, setTimelineZoom] = useState(50);
   const [commentToEdit, setCommentToEdit] = useState<number | null>(null);
@@ -739,6 +741,38 @@ function Editor() {
   const [undoStack, setUndoStack] = useState<UndoAction[]>([]);
   const navigate = useNavigate();
   const { isDark } = useTheme();
+
+  const baseMinTimelineZoom = 25;
+  const computedMinTimelineZoom =
+    screenshots.length > 0 && timelineViewportWidth > 0
+      ? Math.ceil(timelineViewportWidth / screenshots.length)
+      : baseMinTimelineZoom;
+  // Prevent zooming out so far that the timeline becomes narrower than the viewport (which creates a right-side gutter).
+  const minTimelineZoom = Math.max(baseMinTimelineZoom, computedMinTimelineZoom);
+  const maxTimelineZoom = Math.max(200, minTimelineZoom + 200);
+
+  useEffect(() => {
+    // Keep track of the available timeline viewport width so we can clamp zoom-out appropriately.
+    const el = timelineScrollRef.current;
+    if (!el) return undefined;
+
+    const update = () => setTimelineViewportWidth(el.clientWidth);
+    update();
+
+    if (typeof ResizeObserver !== 'undefined') {
+      const observer = new ResizeObserver(() => update());
+      observer.observe(el);
+      return () => observer.disconnect();
+    }
+
+    window.addEventListener('resize', update);
+    return () => window.removeEventListener('resize', update);
+  }, []);
+
+  useEffect(() => {
+    // If the viewport grows or screenshot count shrinks, clamp up so we never show blank space.
+    setTimelineZoom((z) => (z < minTimelineZoom ? minTimelineZoom : z));
+  }, [minTimelineZoom]);
 
   useEffect(() => {
     // Listen for load-editor events from the main process
@@ -1451,16 +1485,17 @@ function Editor() {
               <div className="flex items-center gap-3">
                 <button
                   type="button"
-                  onClick={() => setTimelineZoom((v) => Math.max(25, v - 10))}
-                  className={`p-1.5 rounded transition-colors ${isDark ? 'hover:bg-industrial-black-tertiary' : 'hover:bg-gray-100'}`}
+                  onClick={() => setTimelineZoom((v) => Math.max(minTimelineZoom, v - 10))}
+                  className={`p-1.5 rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed ${isDark ? 'hover:bg-industrial-black-tertiary' : 'hover:bg-gray-100'}`}
                   aria-label="Zoom out timeline"
+                  disabled={timelineZoom <= minTimelineZoom}
                 >
                   <ZoomOut className={`w-4 h-4 ${isDark ? 'text-industrial-white-tertiary' : 'text-gray-500'}`} strokeWidth={1.5} />
                 </button>
                 <input
                   type="range"
-                  min="25"
-                  max="200"
+                  min={minTimelineZoom}
+                  max={maxTimelineZoom}
                   value={timelineZoom}
                   onChange={(e) => setTimelineZoom(Number(e.target.value))}
                   className={`w-32 h-1 rounded-full appearance-none border [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:cursor-pointer [&::-webkit-slider-thumb]:border ${isDark ? 'bg-industrial-black-tertiary border-industrial-border-subtle [&::-webkit-slider-thumb]:bg-industrial-orange [&::-webkit-slider-thumb]:border-industrial-orange/20' : 'bg-gray-200 border-gray-300 [&::-webkit-slider-thumb]:bg-blue-500 [&::-webkit-slider-thumb]:border-blue-600'}`}
@@ -1468,9 +1503,10 @@ function Editor() {
                 />
                 <button
                   type="button"
-                  onClick={() => setTimelineZoom((v) => Math.min(200, v + 10))}
-                  className={`p-1.5 rounded transition-colors ${isDark ? 'hover:bg-industrial-black-tertiary' : 'hover:bg-gray-100'}`}
+                  onClick={() => setTimelineZoom((v) => Math.min(maxTimelineZoom, v + 10))}
+                  className={`p-1.5 rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed ${isDark ? 'hover:bg-industrial-black-tertiary' : 'hover:bg-gray-100'}`}
                   aria-label="Zoom in timeline"
+                  disabled={timelineZoom >= maxTimelineZoom}
                 >
                   <ZoomIn className={`w-4 h-4 ${isDark ? 'text-industrial-white-tertiary' : 'text-gray-500'}`} strokeWidth={1.5} />
                 </button>
@@ -1480,6 +1516,7 @@ function Editor() {
 
           <div className="relative">
             <div
+              ref={timelineScrollRef}
               className={`relative overflow-x-auto hide-scrollbar show-scrollbar-on-hover border ${
                 isDark
                   ? 'bg-industrial-black-tertiary border-industrial-border-subtle'

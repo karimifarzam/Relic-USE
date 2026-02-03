@@ -74,7 +74,7 @@ function TaskList() {
   const dummyTasks: Task[] = Array(40)
     .fill(null)
     .map((_, index) => ({
-      id: index % 2 === 0 ? '42F' : '14B',
+      id: index % 2 === 0 ? 42 : 14,
       title:
         index % 2 === 0
           ? 'Go into settings and turn off dark mode'

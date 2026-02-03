@@ -196,9 +196,6 @@ function Sidebar() {
               <p className={`text-[10px] font-mono font-bold uppercase tracking-wide truncate ${isDark ? 'text-white' : 'text-gray-900'}`}>
                 {profile?.username || 'User'}
               </p>
-              <p className={`text-[9px] font-mono ${isDark ? 'text-industrial-white-tertiary' : 'text-gray-500'}`}>
-                {profile?.display_name || ''}
-              </p>
             </div>
           </div>
           {/* Points display */}

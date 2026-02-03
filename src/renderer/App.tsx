@@ -22,13 +22,20 @@ import { AuthProvider } from './contexts/AuthContext';
 export const Layout = ({ children }: { children?: React.ReactNode }) => {
   const { isDark } = useTheme();
 
+  useEffect(() => {
+    window.electron.ipcRenderer.invoke('ui:set-scaling-enabled', true);
+    return () => {
+      window.electron.ipcRenderer.invoke('ui:set-scaling-enabled', false);
+    };
+  }, []);
+
   return (
     <>
       <header className={`titlebar ${isDark ? 'bg-black border-b border-[#1a1a1a]' : 'titlebar-light bg-white border-b border-gray-200'}`}></header>
       <div className={`flex relative h-screen overflow-hidden ${isDark ? 'bg-industrial-black-primary' : 'bg-white'}`}>
         <Sidebar />
         <main className="flex-1 pt-[38px] px-8 overflow-auto hide-scrollbar show-scrollbar-on-hover">
-          <div className="max-w-[1400px] mx-auto pb-8">
+          <div className="w-full pb-8">
             {children || <Outlet />}
           </div>
         </main>

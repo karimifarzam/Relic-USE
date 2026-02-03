@@ -1,9 +1,10 @@
 // EarningsTab.tsx
-import { Text, BarChart } from '@tremor/react';
+import { Text } from '@tremor/react';
 import { BarChart2, Users, Wallet, Copy, Check } from 'lucide-react';
 import { useTheme } from '../../contexts/ThemeContext';
 import { useAuth } from '../../contexts/AuthContext';
 import { useState } from 'react';
+import ZoomablePointsChart from './ZoomablePointsChart';
 
 
 interface Stat {
@@ -23,8 +24,8 @@ interface EarningsTabProps {
     statsCards: Stat[];
     earningsData: Array<{
       date: string;
-      'Task Earnings': number;
-      'Passive Earnings': number;
+      'Task Points': number;
+      'Passive Points': number;
     }>;
     recentPayouts: PayoutItem[];
     statRefs: React.MutableRefObject<{ [key: string]: HTMLDivElement | null }>;
@@ -118,32 +119,7 @@ interface EarningsTabProps {
           </div>
 
           <div className={`rounded-lg p-4 ${isDark ? 'bg-industrial-black-primary' : 'bg-gray-50'}`}>
-            <style>
-              {`
-                .dark .earnings-chart-container ol li p {
-                  color: white !important;
-                }
-                .earnings-chart-container ol li p {
-                  color: #111827 !important;
-                  font-family: 'SF Mono', Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace !important;
-                  font-size: 9px !important;
-                  text-transform: uppercase !important;
-                  letter-spacing: 0.1em !important;
-                  font-weight: 700 !important;
-                }
-              `}
-            </style>
-            <div className="earnings-chart-container">
-              <BarChart
-                data={earningsData}
-                index="date"
-                categories={['Task Points', 'Passive Points']}
-                colors={['blue', 'orange']}
-                valueFormatter={(number) => `${number}`}
-                yAxisWidth={48}
-                className="h-72"
-              />
-            </div>
+            <ZoomablePointsChart data={earningsData} heightClassName="h-[460px]" />
           </div>
         </div>
       </div>

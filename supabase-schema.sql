@@ -8,7 +8,6 @@
 CREATE TABLE IF NOT EXISTS public.profiles (
   id UUID PRIMARY KEY REFERENCES auth.users(id) ON DELETE CASCADE,
   username TEXT UNIQUE NOT NULL,
-  display_name TEXT,
   points_earned INTEGER NOT NULL DEFAULT 0,
   referral_code TEXT UNIQUE,
   referred_by UUID REFERENCES public.profiles(id),
@@ -247,11 +246,10 @@ BEGIN
   END IF;
 
   -- Create the new user's profile with referral data
-  INSERT INTO public.profiles (id, username, display_name, referral_code, referred_by)
+  INSERT INTO public.profiles (id, username, referral_code, referred_by)
   VALUES (
     NEW.id,
     COALESCE(NEW.raw_user_meta_data->>'username', split_part(NEW.email, '@', 1)),
-    COALESCE(NEW.raw_user_meta_data->>'display_name', split_part(NEW.email, '@', 1)),
     new_referral_code,
     referrer_id
   );

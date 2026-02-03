@@ -48,7 +48,6 @@ export interface Database {
         Row: {
           id: string;
           username: string;
-          display_name: string | null;
           points_earned: number;
           referral_code: string;
           referred_by: string | null;
@@ -59,7 +58,6 @@ export interface Database {
         Insert: {
           id: string;
           username: string;
-          display_name?: string | null;
           points_earned?: number;
           referral_code?: string;
           referred_by?: string | null;
@@ -70,7 +68,6 @@ export interface Database {
         Update: {
           id?: string;
           username?: string;
-          display_name?: string | null;
           points_earned?: number;
           referral_code?: string;
           referred_by?: string | null;

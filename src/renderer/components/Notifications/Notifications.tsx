@@ -141,7 +141,7 @@ function Notifications() {
       <div className="py-6">
         {/* Page Header */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
-          <div className="flex items-center gap-4">
+          <div className="flex items-center gap-4 sm:self-start sm:pt-1">
             <h1 className={`text-2xl font-mono font-light tracking-tight ${isDark ? 'text-white' : 'text-gray-900'}`}>
               NOTIFICATIONS
             </h1>

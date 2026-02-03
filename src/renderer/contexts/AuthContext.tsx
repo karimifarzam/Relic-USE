@@ -5,7 +5,6 @@ interface User {
   email?: string;
   user_metadata?: {
     username?: string;
-    display_name?: string;
   };
 }
 
@@ -19,7 +18,6 @@ interface Session {
 interface UserProfile {
   id: string;
   username: string;
-  display_name: string | null;
   points_earned: number;
   referral_code: string;
   referred_by: string | null;
@@ -32,7 +30,6 @@ interface SignUpParams {
   email: string;
   password: string;
   username: string;
-  displayName?: string;
   referralCode?: string;
 }
 
@@ -104,7 +101,6 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           email: 'demo@relic.app',
           user_metadata: {
             username: 'demo_user',
-            display_name: 'Demo User',
           },
         };
         const demoSession: Session = {
@@ -118,7 +114,6 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         setProfile({
           id: 'demo-user-001',
           username: 'demo_user',
-          display_name: 'Demo User',
           points_earned: 1250,
           referral_code: 'DEMO2024',
           referred_by: null,
@@ -162,7 +157,6 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
           email: 'demo@relic.app',
           user_metadata: {
             username: 'demo_user',
-            display_name: 'Demo User',
           },
         };
         const demoSession: Session = {
@@ -176,7 +170,6 @@ export const AuthProvider: React.FC<AuthProviderProps> = ({ children }) => {
         setProfile({
           id: 'demo-user-001',
           username: 'demo_user',
-          display_name: 'Demo User',
           points_earned: 1250,
           referral_code: 'DEMO2024',
           referred_by: null,

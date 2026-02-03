@@ -103,7 +103,7 @@ const SubmissionsTab: React.FC<SubmissionsTabProps> = ({
           {submissionStats.map((stat, index) => (
             <div
               key={index}
-              className={`relative rounded-lg p-4 overflow-hidden group hover-lift transition-all flex flex-col ${isDark ? 'bg-industrial-black-secondary border border-industrial-border' : 'bg-white border border-gray-200'}`}
+              className={`relative rounded-lg p-4 overflow-hidden group hover-lift transition-all flex flex-col ${isDark ? 'bg-industrial-black-secondary border border-industrial-border' : 'bg-white border border-gray-200 shadow-industrial'}`}
             >
               <p className={`text-[9px] uppercase tracking-industrial-wide font-mono font-bold mb-3 h-[18px] flex items-center ${isDark ? 'text-industrial-white-tertiary' : 'text-gray-500'}`}>
                 {stat.title}
@@ -112,7 +112,7 @@ const SubmissionsTab: React.FC<SubmissionsTabProps> = ({
               <div className="flex justify-center items-center mt-1 mb-4 flex-1">
                 <div
                   ref={(el) => (statRefs.current[`submission-${index}`] = el)}
-                  className={`text-2xl font-mono font-light relative group/tooltip ${isDark ? 'text-white' : 'text-gray-900'}`}
+                  className={`text-[28px] font-sans font-semibold tracking-tight relative group/tooltip ${isDark ? 'text-white' : 'text-gray-900'}`}
                   title={formatFullNumber(stat.value)}
                 >
                   {formatNumber(stat.value)}

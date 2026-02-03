@@ -9,6 +9,7 @@ export type Channels =
   | 'stop-recording-sensitive'
   | 'set-recording-status'
   | 'set-theme'
+  | 'theme-changed'
   | 'take-screenshot'
   | 'get-sources'
   | 'get-active-window'
@@ -66,7 +67,8 @@ export type Channels =
   | 'get-notifications'
   | 'mark-notification-read'
   | 'clear-all-notifications'
-  | 'notification-created';
+  | 'notification-created'
+  | 'ui:set-scaling-enabled';
 
 const electronHandler = {
   ipcRenderer: {
@@ -153,6 +155,7 @@ const electronHandler = {
         'mark-notification-read',
         'clear-all-notifications',
         'notification-created',
+        'ui:set-scaling-enabled',
       ];
       if (validChannels.includes(channel)) {
         return ipcRenderer.invoke(channel, ...args);

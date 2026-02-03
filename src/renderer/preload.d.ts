@@ -5,14 +5,14 @@ declare global {
   interface Window {
     electron: {
       ipcRenderer: {
-        sendMessage(channel: Channels, ...args: unknown[]): void;
+        sendMessage(channel: Channels, ...args: any[]): void;
         on(
           channel: Channels,
-          func: (...args: unknown[]) => void,
+          func: (...args: any[]) => void,
         ): (() => void) | undefined;
-        once(channel: Channels, func: (...args: unknown[]) => void): void;
+        once(channel: Channels, func: (...args: any[]) => void): void;
         removeAllListeners(channel: Channels): void;
-        invoke(channel: Channels, ...args: unknown[]): Promise<unknown>;
+        invoke<T = any>(channel: Channels, ...args: any[]): Promise<T>;
       };
       windowUtils: {
         isTrayWindow: () => boolean;

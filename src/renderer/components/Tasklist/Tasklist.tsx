@@ -74,7 +74,7 @@ function TaskList() {
   const dummyTasks: Task[] = Array(40)
     .fill(null)
     .map((_, index) => ({
-      id: index % 2 === 0 ? '42F' : '14B',
+      id: index % 2 === 0 ? 42 : 14,
       title:
         index % 2 === 0
           ? 'Go into settings and turn off dark mode'
@@ -127,13 +127,15 @@ function TaskList() {
 
   return (
     <main className={`min-h-screen ${isDark ? 'bg-industrial-black-primary' : 'bg-white'}`}>
-      <div className="flex-1 py-6">
-        <h1 className={`text-2xl font-mono font-light tracking-tight mb-6 ${isDark ? 'text-white' : 'text-gray-900'}`}>TASK SELECTION</h1>
+      <div className="py-6">
+        {/* Header with Title and Filters */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
+          <div className="flex items-center gap-4 sm:self-start sm:pt-1">
+            <h1 className={`text-2xl font-mono font-light tracking-tight ${isDark ? 'text-white' : 'text-gray-900'}`}>TASK SELECTION</h1>
+          </div>
 
-        <div className="flex items-start gap-6">
-          <div className="flex-1">
-            {/* Search and Filters */}
-            <div className="flex gap-3 mb-6">
+          {/* Search and Filters */}
+          <div className="flex gap-2">
               <input
                 type="text"
                 placeholder="Filter tasks..."
@@ -172,7 +174,10 @@ function TaskList() {
                 </div>
               ))}
             </div>
+        </div>
 
+        <div className="flex items-start gap-6">
+          <div className="flex-1">
             {/* Table */}
             <div className={`overflow-hidden rounded-lg ${isDark ? 'bg-industrial-black-secondary border border-industrial-border' : 'bg-white border border-gray-200'}`}>
               <table className="w-full">

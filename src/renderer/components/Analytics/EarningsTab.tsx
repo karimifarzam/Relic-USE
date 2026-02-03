@@ -1,9 +1,10 @@
 // EarningsTab.tsx
-import { Text, BarChart } from '@tremor/react';
+import { Text } from '@tremor/react';
 import { BarChart2, Users, Wallet, Copy, Check } from 'lucide-react';
 import { useTheme } from '../../contexts/ThemeContext';
 import { useAuth } from '../../contexts/AuthContext';
 import { useState } from 'react';
+import ZoomablePointsChart from './ZoomablePointsChart';
 
 
 interface Stat {
@@ -23,8 +24,8 @@ interface EarningsTabProps {
     statsCards: Stat[];
     earningsData: Array<{
       date: string;
-      'Task Earnings': number;
-      'Passive Earnings': number;
+      'Task Points': number;
+      'Passive Points': number;
     }>;
     recentPayouts: PayoutItem[];
     statRefs: React.MutableRefObject<{ [key: string]: HTMLDivElement | null }>;
@@ -75,7 +76,7 @@ interface EarningsTabProps {
           {statsCards.map((stat, index) => (
             <div
               key={index}
-              className={`relative rounded-lg p-4 overflow-hidden group hover-lift transition-all flex flex-col ${isDark ? 'bg-industrial-black-secondary border border-industrial-border' : 'bg-white border border-gray-200'}`}
+              className={`relative rounded-lg p-4 overflow-hidden group hover-lift transition-all flex flex-col ${isDark ? 'bg-industrial-black-secondary border border-industrial-border' : 'bg-white border border-gray-200 shadow-industrial'}`}
             >
               <p className={`text-[9px] uppercase tracking-industrial-wide font-mono font-bold mb-3 h-[18px] flex items-center ${isDark ? 'text-industrial-white-tertiary' : 'text-gray-500'}`}>
                 {stat.title}
@@ -84,7 +85,7 @@ interface EarningsTabProps {
               <div className="flex justify-center items-center mt-1 mb-4 flex-1">
                 <div
                   ref={(el) => (statRefs.current[index] = el)}
-                  className={`text-2xl font-mono font-light relative group/tooltip ${isDark ? 'text-white' : 'text-gray-900'}`}
+                  className={`text-[28px] font-sans font-semibold tracking-tight relative group/tooltip ${isDark ? 'text-white' : 'text-gray-900'}`}
                   title={formatFullNumber(stat.value)}
                 >
                   {formatNumber(stat.value)}
@@ -118,32 +119,7 @@ interface EarningsTabProps {
           </div>
 
           <div className={`rounded-lg p-4 ${isDark ? 'bg-industrial-black-primary' : 'bg-gray-50'}`}>
-            <style>
-              {`
-                .dark .earnings-chart-container ol li p {
-                  color: white !important;
-                }
-                .earnings-chart-container ol li p {
-                  color: #111827 !important;
-                  font-family: 'SF Mono', Monaco, Consolas, 'Liberation Mono', 'Courier New', monospace !important;
-                  font-size: 9px !important;
-                  text-transform: uppercase !important;
-                  letter-spacing: 0.1em !important;
-                  font-weight: 700 !important;
-                }
-              `}
-            </style>
-            <div className="earnings-chart-container">
-              <BarChart
-                data={earningsData}
-                index="date"
-                categories={['Task Points', 'Passive Points']}
-                colors={['blue', 'orange']}
-                valueFormatter={(number) => `${number}`}
-                yAxisWidth={48}
-                className="h-72"
-              />
-            </div>
+            <ZoomablePointsChart data={earningsData} heightClassName="h-[460px]" />
           </div>
         </div>
       </div>

@@ -76,7 +76,7 @@ interface EarningsTabProps {
           {statsCards.map((stat, index) => (
             <div
               key={index}
-              className={`relative rounded-lg p-4 overflow-hidden group hover-lift transition-all flex flex-col ${isDark ? 'bg-industrial-black-secondary border border-industrial-border' : 'bg-white border border-gray-200'}`}
+              className={`relative rounded-lg p-4 overflow-hidden group hover-lift transition-all flex flex-col ${isDark ? 'bg-industrial-black-secondary border border-industrial-border' : 'bg-white border border-gray-200 shadow-industrial'}`}
             >
               <p className={`text-[9px] uppercase tracking-industrial-wide font-mono font-bold mb-3 h-[18px] flex items-center ${isDark ? 'text-industrial-white-tertiary' : 'text-gray-500'}`}>
                 {stat.title}

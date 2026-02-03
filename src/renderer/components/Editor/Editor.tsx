@@ -18,6 +18,7 @@ import {
   CirclePlus,
   Pencil,
   Edit2,
+  Send,
 } from 'lucide-react';
 import myBoard from '../../../../assets/icons/myBoard.svg';
 
@@ -354,7 +355,8 @@ const CommentSidebar: React.FC<{
   currentTime?: number;
   endTime?: number;
   isDark: boolean;
-}> = ({ comments, onAddComment, onDeleteComment, onUpdateComment, commentToEdit, currentTime = 0, endTime, isDark }) => {
+  footer?: React.ReactNode;
+}> = ({ comments, onAddComment, onDeleteComment, onUpdateComment, commentToEdit, currentTime = 0, endTime, isDark, footer }) => {
   const [isAdding, setIsAdding] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [newComment, setNewComment] = useState('');
@@ -599,6 +601,8 @@ const CommentSidebar: React.FC<{
           <CirclePlus className={`w-4 h-4 ${isDark ? 'text-industrial-orange' : 'text-blue-500'}`} />
         </button>
       )}
+
+      {footer ? <div className="mt-3 flex justify-end gap-2 flex-shrink-0">{footer}</div> : null}
     </div>
   );
 };
@@ -713,6 +717,8 @@ function Editor() {
   const [currentIndex, setCurrentIndex] = useState(0);
   const [zoomLevel, setZoomLevel] = useState(50);
   const [commentToEdit, setCommentToEdit] = useState<number | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isDeletingClip, setIsDeletingClip] = useState(false);
   const navigate = useNavigate();
   const { isDark } = useTheme();
 
@@ -925,8 +931,8 @@ function Editor() {
     setSelectedIndices(indices);
   };
 
-  const handleSave = async () => {
-    if (!currentSessionId) return;
+  const handleSave = async (): Promise<boolean> => {
+    if (!currentSessionId) return false;
 
     try {
       // Delete all recordings in parallel using Promise.all
@@ -947,29 +953,124 @@ function Editor() {
       setOriginalScreenshots(screenshots);
 
       // Show success message
-      if (window.electron?.ipcRenderer?.sendMessage) {
-        window.electron.ipcRenderer.sendMessage('show-success-notification', {
-          title: 'Success',
-          message: 'Changes saved successfully',
-        });
-      }
+      window.electron?.ipcRenderer?.sendMessage?.('show-success-notification', {
+        title: 'Success',
+        message: 'Changes saved successfully',
+      });
+
+      return true;
     } catch (error) {
       console.error('Failed to save changes:', error);
       // Show error message
-      if (window.electron?.ipcRenderer?.sendMessage) {
-        window.electron.ipcRenderer.sendMessage('show-error-notification', {
-          title: 'Error',
-          message: 'Failed to save changes',
-        });
-      }
+      window.electron?.ipcRenderer?.sendMessage?.('show-error-notification', {
+        title: 'Error',
+        message: 'Failed to save changes',
+      });
+      return false;
     }
   };
 
   const handleCancel = () => {
-    // Revert all changes
+    // Revert pending deletions / screenshot edits back to the last saved state.
+    const maxIndex = Math.max(0, originalScreenshots.length - 1);
     setScreenshots(originalScreenshots);
     setPendingDeletions([]);
+    setSelectedIndices([]);
+    setCurrentIndex((idx) => Math.min(idx, maxIndex));
     setHasUnsavedChanges(false);
+  };
+
+  const handleDeleteClip = async () => {
+    if (!currentSessionId || isDeletingClip) return;
+
+    try {
+      setIsDeletingClip(true);
+
+      let confirmed = false;
+      if (window.electron?.ipcRenderer?.invoke) {
+        confirmed = (await window.electron.ipcRenderer.invoke(
+          'show-delete-confirmation',
+          {
+            title: 'Delete Clip',
+            message:
+              'This will permanently delete this clip and all associated recordings. Continue?',
+          },
+        )) as boolean;
+      } else {
+        confirmed = window.confirm(
+          'This will permanently delete this clip and all associated recordings. Continue?',
+        );
+      }
+
+      if (!confirmed) return;
+
+      if (window.electron?.ipcRenderer?.invoke) {
+        await window.electron.ipcRenderer.invoke('delete-session', currentSessionId);
+      }
+
+      // Reset local state and return to dashboard
+      setScreenshots([]);
+      setOriginalScreenshots([]);
+      setPendingDeletions([]);
+      setHasUnsavedChanges(false);
+      setComments([]);
+      setCurrentSessionId(null);
+
+      window.electron?.ipcRenderer?.sendMessage?.('show-success-notification', {
+        title: 'Deleted',
+        message: 'Clip deleted successfully',
+      });
+
+      navigate('/');
+    } catch (error) {
+      console.error('Failed to delete clip:', error);
+      window.electron?.ipcRenderer?.sendMessage?.('show-error-notification', {
+        title: 'Error',
+        message: 'Failed to delete clip',
+      });
+    } finally {
+      setIsDeletingClip(false);
+    }
+  };
+
+  const handleSubmit = async () => {
+    if (!currentSessionId || isSubmitting) return;
+
+    try {
+      setIsSubmitting(true);
+
+      // If there are pending deletions, save them before submitting.
+      if (hasUnsavedChanges) {
+        const saved = await handleSave();
+        if (!saved) return;
+      }
+
+      const result = await window.electron?.ipcRenderer?.invoke?.(
+        'submit-session',
+        currentSessionId,
+      );
+
+      if (result?.success) {
+        window.electron?.ipcRenderer?.sendMessage?.('show-success-notification', {
+          title: 'Submitted',
+          message: `Session submitted successfully! +${result.pointsEarned || 0} points earned`,
+        });
+        navigate('/');
+      } else {
+        window.electron?.ipcRenderer?.sendMessage?.('show-error-notification', {
+          title: 'Error',
+          message: result?.error || 'Failed to submit session',
+        });
+      }
+    } catch (error: any) {
+      console.error('Submit error:', error);
+      window.electron?.ipcRenderer?.sendMessage?.('show-error-notification', {
+        title: 'Error',
+        message: error?.message || 'Failed to submit session',
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const handleBack = () => {
@@ -1120,26 +1221,32 @@ function Editor() {
             </h1>
           </div>
           <div className="flex gap-2 min-h-[38px] items-center">
-            {hasUnsavedChanges && (
-              <>
-                <button
-                  type="button"
-                  onClick={handleCancel}
-                  className={`px-4 py-2 text-[10px] uppercase tracking-industrial-wide font-mono font-bold rounded-lg hover-lift transition-all ${isDark ? 'text-industrial-white-secondary hover:text-white bg-industrial-black-secondary border border-industrial-border' : 'text-gray-600 hover:text-gray-900 bg-gray-100 border border-gray-300'}`}
-                >
-                  <X className="w-3.5 h-3.5 inline mr-1.5" strokeWidth={1.5} />
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={handleSave}
-                  className={`px-4 py-2 text-[10px] uppercase tracking-industrial-wide font-mono font-bold rounded-lg hover-lift transition-all shadow-industrial-sm ${isDark ? 'text-black bg-industrial-orange hover:bg-industrial-orange/90 border border-industrial-orange/20' : 'text-white bg-blue-500 hover:bg-blue-600 border border-blue-600'}`}
-                >
-                  <Save className="w-3.5 h-3.5 inline mr-1.5" strokeWidth={1.5} />
-                  Save Changes
-                </button>
-              </>
-            )}
+            <button
+              type="button"
+              onClick={handleDeleteClip}
+              disabled={!currentSessionId || isDeletingClip}
+              className={`px-4 py-2 rounded-lg text-[10px] uppercase tracking-industrial-wide font-mono font-bold transition-all hover-lift disabled:opacity-50 disabled:cursor-not-allowed hover:text-industrial-red ${
+                isDark
+                  ? 'bg-industrial-black-secondary border border-industrial-border text-industrial-white-secondary hover:border-industrial-red/30'
+                  : 'bg-white border border-gray-300 text-gray-700 hover:border-red-300'
+              }`}
+            >
+              <Trash2 className="w-3.5 h-3.5 inline mr-1.5" strokeWidth={1.5} />
+              Delete
+            </button>
+            <button
+              type="button"
+              onClick={handleSubmit}
+              disabled={!currentSessionId || isSubmitting}
+              className={`px-4 py-2 text-[10px] uppercase tracking-industrial-wide font-mono font-bold rounded-lg hover-lift transition-all shadow-industrial-sm disabled:opacity-50 disabled:cursor-not-allowed ${
+                isDark
+                  ? 'text-black bg-industrial-orange hover:bg-industrial-orange/90 border border-industrial-orange/20'
+                  : 'text-white bg-blue-500 hover:bg-blue-600 border border-blue-600'
+              }`}
+            >
+              <Send className="w-3.5 h-3.5 inline mr-1.5" strokeWidth={1.5} />
+              Submit
+            </button>
           </div>
         </div>
 
@@ -1174,6 +1281,37 @@ function Editor() {
                 : screenshots[currentIndex + 1]?.time ?? (screenshots[currentIndex]?.time ?? currentIndex) + 1
             }
             isDark={isDark}
+            footer={
+              <>
+                <button
+                  type="button"
+                  onClick={handleCancel}
+                  disabled={!hasUnsavedChanges}
+                  className={`px-4 py-2 text-[10px] uppercase tracking-industrial-wide font-mono font-bold rounded-lg hover-lift transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
+                    isDark
+                      ? 'text-industrial-white-secondary hover:text-white bg-industrial-black-secondary border border-industrial-border'
+                      : 'text-gray-600 hover:text-gray-900 bg-gray-100 border border-gray-300'
+                  }`}
+                >
+                  <X className="w-3.5 h-3.5 inline mr-1.5" strokeWidth={1.5} />
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleSave()}
+                  disabled={!hasUnsavedChanges || !currentSessionId}
+                  className={`px-4 py-2 text-[10px] uppercase tracking-industrial-wide font-mono font-bold rounded-lg hover-lift transition-all shadow-industrial-sm disabled:opacity-50 disabled:cursor-not-allowed ${
+                    isDark
+                      ? 'text-black bg-industrial-orange hover:bg-industrial-orange/90 border border-industrial-orange/20'
+                      : 'text-white bg-blue-500 hover:bg-blue-600 border border-blue-600'
+                  }`}
+                  title={hasUnsavedChanges ? 'Save pending changes' : 'No pending changes'}
+                >
+                  <Save className="w-3.5 h-3.5 inline mr-1.5" strokeWidth={1.5} />
+                  Save Changes
+                </button>
+              </>
+            }
           />
         </div>
 

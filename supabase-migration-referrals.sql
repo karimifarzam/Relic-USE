@@ -6,6 +6,17 @@
 -- Step 1: Add new columns to profiles table (if they don't exist)
 DO $$
 BEGIN
+  -- Drop display_name column if it exists (no longer used)
+  IF EXISTS (
+    SELECT 1 FROM information_schema.columns
+    WHERE table_schema = 'public'
+    AND table_name = 'profiles'
+    AND column_name = 'display_name'
+  ) THEN
+    ALTER TABLE public.profiles DROP COLUMN display_name;
+    RAISE NOTICE 'Dropped display_name column';
+  END IF;
+
   -- Add referral_code column
   IF NOT EXISTS (
     SELECT 1 FROM information_schema.columns
@@ -102,11 +113,10 @@ BEGIN
   END IF;
 
   -- Create the new user's profile with referral data
-  INSERT INTO public.profiles (id, username, display_name, referral_code, referred_by)
+  INSERT INTO public.profiles (id, username, referral_code, referred_by)
   VALUES (
     NEW.id,
     COALESCE(NEW.raw_user_meta_data->>'username', split_part(NEW.email, '@', 1)),
-    COALESCE(NEW.raw_user_meta_data->>'display_name', split_part(NEW.email, '@', 1)),
     new_referral_code,
     referrer_id
   );

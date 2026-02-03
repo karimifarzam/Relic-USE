@@ -23,6 +23,11 @@ export default function SignIn() {
     }
   }, [isAuthenticated, navigate]);
 
+  useEffect(() => {
+    // Auth screens should not be auto-scaled.
+    window.electron.ipcRenderer.invoke('ui:set-scaling-enabled', false);
+  }, []);
+
   const handleSubmit = async (e: React.FormEvent) => {
     e.preventDefault();
     setError('');

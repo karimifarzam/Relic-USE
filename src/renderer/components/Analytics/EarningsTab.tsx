@@ -1,9 +1,10 @@
 // EarningsTab.tsx
-import { Text, BarChart } from '@tremor/react';
+import { Text } from '@tremor/react';
 import { BarChart2, Users, Wallet, Copy, Check } from 'lucide-react';
 import { useTheme } from '../../contexts/ThemeContext';
 import { useAuth } from '../../contexts/AuthContext';
 import { useState } from 'react';
+import ZoomablePointsChart from './ZoomablePointsChart';
 
 
 interface Stat {
@@ -23,8 +24,8 @@ interface EarningsTabProps {
     statsCards: Stat[];
     earningsData: Array<{
       date: string;
-      'Task Earnings': number;
-      'Passive Earnings': number;
+      'Task Points': number;
+      'Passive Points': number;
     }>;
     recentPayouts: PayoutItem[];
     statRefs: React.MutableRefObject<{ [key: string]: HTMLDivElement | null }>;

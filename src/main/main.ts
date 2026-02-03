@@ -87,6 +87,55 @@ class AppUpdater {
 let mainWindow: BrowserWindow | null = null;
 let trayWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
+
+const DEFAULT_WINDOW_WIDTH_RATIO = 0.85;
+const DEFAULT_WINDOW_HEIGHT_RATIO = 0.88;
+const DEFAULT_WINDOW_ASPECT_GAP = 40;
+
+const getDefaultWindowBounds = () => {
+  const { width: workAreaWidth, height: workAreaHeight } = screen.getPrimaryDisplay().workAreaSize;
+
+  let width = Math.round(workAreaWidth * DEFAULT_WINDOW_WIDTH_RATIO);
+  let height = Math.round(workAreaHeight * DEFAULT_WINDOW_HEIGHT_RATIO);
+
+  width = Math.min(width, workAreaWidth);
+  height = Math.min(height, workAreaHeight);
+
+  if (height >= width) {
+    height = Math.min(height, Math.max(1, width - DEFAULT_WINDOW_ASPECT_GAP));
+  }
+
+  return { width, height };
+};
+
+const UI_SCALE_BASE_WIDTH = 1400;
+const UI_SCALE_BASE_HEIGHT = 900;
+const UI_SCALE_MIN = 0.75;
+const UI_SCALE_MAX = 1.25;
+const uiScaleEnabledWebContents = new Set<number>();
+
+const computeUiZoomFactor = (width: number, height: number) => {
+  const scale = Math.min(width / UI_SCALE_BASE_WIDTH, height / UI_SCALE_BASE_HEIGHT);
+  return Math.max(UI_SCALE_MIN, Math.min(UI_SCALE_MAX, scale));
+};
+
+const applyUiZoom = (win: BrowserWindow) => {
+  if (win.isDestroyed()) return;
+  const { width, height } = win.getContentBounds();
+  win.webContents.setZoomFactor(computeUiZoomFactor(width, height));
+};
+
+const attachUiScaling = (win: BrowserWindow) => {
+  win.on('resize', () => {
+    if (uiScaleEnabledWebContents.has(win.webContents.id)) {
+      applyUiZoom(win);
+    }
+  });
+
+  win.on('closed', () => {
+    uiScaleEnabledWebContents.delete(win.webContents.id);
+  });
+};
 let isRecording = false;
 let isPaused = false;
 let lastSensitiveNotification = 0;
@@ -210,9 +259,10 @@ const createTrayWindow = () => {
 
 // Add this after the createTrayWindow function
 const createDashboardWindow = () => {
+  const { width: defaultWidth, height: defaultHeight } = getDefaultWindowBounds();
   const dashboardWindow = new BrowserWindow({
-    width: 1200,
-    height: 800,
+    width: defaultWidth,
+    height: defaultHeight,
     show: false,
     titleBarStyle: 'hidden',
     trafficLightPosition: {
@@ -228,6 +278,7 @@ const createDashboardWindow = () => {
       allowRunningInsecureContent: false,
     },
   });
+  attachUiScaling(dashboardWindow);
 
   if (app.isPackaged) {
     dashboardWindow.loadURL(`${resolveHtmlPath('index.html')}?dashboard=true`);
@@ -247,6 +298,21 @@ const createDashboardWindow = () => {
 
 // All IPC handler registrations are in registerIpcHandlers()
 function registerIpcHandlers() {
+  ipcMain.handle('ui:set-scaling-enabled', (event, enabled: boolean) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win || win.isDestroyed()) return false;
+
+    if (enabled) {
+      uiScaleEnabledWebContents.add(event.sender.id);
+      applyUiZoom(win);
+      return true;
+    }
+
+    uiScaleEnabledWebContents.delete(event.sender.id);
+    win.webContents.setZoomFactor(1);
+    return true;
+  });
+
   ipcMain.handle('show-delete-confirmation', async (event, options) => {
     const result = await dialog.showMessageBox({
       type: 'warning',
@@ -328,10 +394,11 @@ const createWindow = async () => {
     }
   });
 
-  // Create main window with original dimensions
+  const { width: windowWidth, height: windowHeight } = getDefaultWindowBounds();
+  // Create main window with default dimensions
   mainWindow = new BrowserWindow({
-    width: 1200,
-    height: 800,
+    width: windowWidth,
+    height: windowHeight,
     show: false,
     titleBarStyle: 'hidden',
     trafficLightPosition: {
@@ -347,6 +414,7 @@ const createWindow = async () => {
       enableWebSQL: false,
     },
   });
+  attachUiScaling(mainWindow);
 
   mainWindow.loadURL(resolveHtmlPath('index.html'));
 

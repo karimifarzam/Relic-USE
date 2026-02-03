@@ -198,8 +198,7 @@ All tables have Row Level Security (RLS) enabled:
 await window.electron.ipcRenderer.invoke('auth:sign-up', {
   email: 'user@example.com',
   password: 'password123',
-  username: 'myusername',
-  displayName: 'My Display Name'
+  username: 'myusername'
 });
 
 // Sign in

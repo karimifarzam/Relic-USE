@@ -5,7 +5,6 @@ export interface SignUpParams {
   email: string;
   password: string;
   username: string;
-  displayName?: string;
   referralCode?: string;
 }
 
@@ -24,7 +23,6 @@ export interface AuthResponse {
 export interface UserProfile {
   id: string;
   username: string;
-  display_name: string | null;
   points_earned: number;
   referral_code: string;
   referred_by: string | null;
@@ -41,7 +39,6 @@ export async function signUp({
   email,
   password,
   username,
-  displayName,
   referralCode,
 }: SignUpParams): Promise<AuthResponse> {
   try {
@@ -53,7 +50,6 @@ export async function signUp({
       options: {
         data: {
           username,
-          display_name: displayName || username,
           referral_code: referralCode || null,
         },
       },
@@ -329,7 +325,6 @@ export async function updateUserProfile(
   userId: string,
   updates: {
     username?: string;
-    display_name?: string;
   }
 ): Promise<{
   success: boolean;

@@ -21,8 +21,8 @@ export const ThemeProvider: React.FC<{ children: React.ReactNode }> = ({ childre
     // Listen for theme changes from other windows
     const themeListener = window.electron.ipcRenderer.on(
       'theme-changed',
-      (newTheme: Theme) => {
-        setTheme(newTheme);
+      (newTheme) => {
+        setTheme(newTheme as Theme);
       }
     );
 

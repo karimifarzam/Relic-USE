@@ -11,7 +11,6 @@ import {
 import DropdownField from './Dropdown';
 import pfp from '../../../assets/images/pfp.png';
 import RecordingCard from './Board/RecordingCard';
-import type { Timeout } from 'node:timers';
 import { useTheme } from '../contexts/ThemeContext';
 
 interface TrayProps {
@@ -45,6 +44,18 @@ interface Task {
   completion?: number;
 }
 
+interface SessionSummary {
+  id: number;
+  duration: number;
+}
+
+interface CaptureResult {
+  windowName: string;
+  timestamp: string;
+  thumbnail: string;
+  screenshot: string;
+}
+
 function Tray({ onStartEarning }: TrayProps): JSX.Element {
   const { isDark } = useTheme();
   const [activeTab, setActiveTab] = useState('passive');
@@ -71,13 +82,18 @@ function Tray({ onStartEarning }: TrayProps): JSX.Element {
     type: 'window' | 'screen';
   } | null>(null);
 
+  useEffect(() => {
+    // Tray window should keep a fixed 1:1 UI scale.
+    window.electron.ipcRenderer.invoke('ui:set-scaling-enabled', false);
+  }, []);
+
   const fetchActiveWindows = useCallback(async () => {
     try {
       const allSources =
-        await window.electron.ipcRenderer.invoke('get-active-windows');
+        (await window.electron.ipcRenderer.invoke('get-active-windows')) as Window[];
 
       // Filter out screen sources - only keep actual windows
-      const actualWindows = allSources.filter((source: Window) =>
+      const actualWindows = allSources.filter((source) =>
         source.id.startsWith('window:')
       );
 
@@ -91,12 +107,12 @@ function Tray({ onStartEarning }: TrayProps): JSX.Element {
     const fetchDisplays = async () => {
       try {
         // Get display information with screen source IDs from main process
-        const systemDisplays = await window.electron.ipcRenderer.invoke('get-displays');
+        const systemDisplays = (await window.electron.ipcRenderer.invoke('get-displays')) as Display[];
 
         console.log('Fetched displays:', systemDisplays);
 
         // Use the displays directly - they now include screenSourceId
-        const displayList = systemDisplays.map((display: Display & { screenSourceId?: string }) => ({
+        const displayList = systemDisplays.map((display) => ({
           id: display.id,
           name: display.name,
           screenSourceId: display.screenSourceId,
@@ -131,7 +147,7 @@ function Tray({ onStartEarning }: TrayProps): JSX.Element {
       // Get initial session data
       const fetchSessionDuration = async () => {
         const sessions =
-          await window.electron.ipcRenderer.invoke('get-sessions');
+          (await window.electron.ipcRenderer.invoke('get-sessions')) as SessionSummary[];
         const currentSession = sessions.find((s) => s.id === currentSessionId);
         if (currentSession) {
           setElapsedTime(currentSession.duration);
@@ -148,9 +164,9 @@ function Tray({ onStartEarning }: TrayProps): JSX.Element {
       // Update elapsed time every second from the main process
       timerInterval = setInterval(async () => {
         try {
-          const duration = await window.electron.ipcRenderer.invoke(
+          const duration = (await window.electron.ipcRenderer.invoke(
             'get-current-duration',
-          );
+          )) as number;
           setElapsedTime(duration);
         } catch (error) {
           console.error('Failed to get current duration:', error);
@@ -173,7 +189,7 @@ function Tray({ onStartEarning }: TrayProps): JSX.Element {
           const task = await window.electron.ipcRenderer.invoke(
             'get-task',
             taskId,
-          );
+          ) as Task | null;
           if (task) {
             setSelectedTask(task);
           }
@@ -245,7 +261,7 @@ function Tray({ onStartEarning }: TrayProps): JSX.Element {
   const handleResumeRecording = () => {
     window.electron.ipcRenderer.sendMessage('resume-recording');
     // Restart capture interval
-    startCaptureInterval(currentSessionId);
+    startCaptureInterval(currentSessionId ?? undefined);
   };
 
   const captureActiveWindow = useCallback(
@@ -264,7 +280,7 @@ function Tray({ onStartEarning }: TrayProps): JSX.Element {
           'capture-window',
           sourceId,
           sourceToCapture.type,
-        );
+        ) as CaptureResult | null;
 
         if (capture) {
           console.log(`[TRAY] Capture success, saving...`);
@@ -424,7 +440,7 @@ function Tray({ onStartEarning }: TrayProps): JSX.Element {
         'create-session',
         selectedTask ? 'tasked' : 'passive',
         selectedTask?.id,
-      );
+      ) as number | null;
 
       if (!sessionId) {
         console.error('[TRAY] Failed to create session');

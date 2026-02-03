@@ -2,6 +2,7 @@ import { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
 import { ArrowLeft } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
+import { ArrowLeft } from 'lucide-react';
 import { useTheme } from '../../contexts/ThemeContext';
 
 export default function SignUp() {
@@ -11,7 +12,6 @@ export default function SignUp() {
 
   const [email, setEmail] = useState('');
   const [username, setUsername] = useState('');
-  const [displayName, setDisplayName] = useState('');
   const [referralCode, setReferralCode] = useState('');
   const [password, setPassword] = useState('');
   const [confirmPassword, setConfirmPassword] = useState('');
@@ -28,6 +28,11 @@ export default function SignUp() {
       navigate('/');
     }
   }, [isAuthenticated, navigate]);
+
+  useEffect(() => {
+    // Auth screens should not be auto-scaled.
+    window.electron.ipcRenderer.invoke('ui:set-scaling-enabled', false);
+  }, []);
 
   useEffect(() => {
     const messages: string[]  = [];
@@ -83,7 +88,6 @@ export default function SignUp() {
       email,
       username,
       password,
-      displayName: displayName || username,
       referralCode: referralCode || undefined,
     });
 
@@ -193,27 +197,6 @@ export default function SignUp() {
                         : 'text-gray-900 border border-gray-300 focus:border-blue-500 placeholder:text-gray-400'
                     } rounded disabled:opacity-50`}
                     placeholder="username_001"
-                  />
-                </div>
-              </div>
-
-              {/* Display name field */}
-              <div className="space-y-2">
-                <label className={`block text-[10px] uppercase tracking-[0.2em] font-mono font-bold ${isDark ? 'text-industrial-white-secondary' : 'text-gray-600'}`}>
-                  [ DISPLAY NAME ] (optional)
-                </label>
-                <div className="relative group">
-                  <input
-                    type="text"
-                    value={displayName}
-                    onChange={(e) => setDisplayName(e.target.value)}
-                    disabled={isLoading}
-                    className={`relative w-full px-4 py-2.5 font-mono text-sm bg-transparent transition-all outline-none ${
-                      isDark
-                        ? 'text-white border border-industrial-border focus:border-industrial-orange placeholder:text-industrial-white-tertiary'
-                        : 'text-gray-900 border border-gray-300 focus:border-blue-500 placeholder:text-gray-400'
-                    } rounded disabled:opacity-50`}
-                    placeholder="John Doe"
                   />
                 </div>
               </div>

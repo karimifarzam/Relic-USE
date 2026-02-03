@@ -52,7 +52,10 @@ type PreparedStatements = {
   createRecording: ReturnType<Database['prepare']>;
   updateDuration: ReturnType<Database['prepare']>;
   updateLabel: ReturnType<Database['prepare']>;
+  updateScreenshotPath: ReturnType<Database['prepare']>;
+  getRecordingById: ReturnType<Database['prepare']>;
   createComment: ReturnType<Database['prepare']>;
+  getCommentById: ReturnType<Database['prepare']>;
   deleteComment: ReturnType<Database['prepare']>;
 };
 
@@ -144,10 +147,26 @@ function getDb(): Database {
       WHERE id = ?
     `),
 
+    updateScreenshotPath: db.prepare(`
+      UPDATE recordings
+      SET screenshot_path = ?
+      WHERE id = ?
+    `),
+
+    getRecordingById: db.prepare(`
+      SELECT * FROM recordings
+      WHERE id = ?
+    `),
+
     createComment: db.prepare(`
       INSERT INTO comments (
         session_id, start_time, end_time, comment, created_at
       ) VALUES (?, ?, ?, ?, ?)
+    `),
+
+    getCommentById: db.prepare(`
+      SELECT * FROM comments
+      WHERE id = ?
     `),
 
     deleteComment: db.prepare(`
@@ -369,6 +388,28 @@ export const dbHelpers = {
     });
   },
 
+  updateRecordingScreenshotPath: (recordingId: number, screenshotPath: string): Promise<void> => {
+    return new Promise((resolve, reject) => {
+      try {
+        getStatements().updateScreenshotPath.run(screenshotPath, recordingId);
+        resolve();
+      } catch (err) {
+        reject(err);
+      }
+    });
+  },
+
+  getRecordingById: (recordingId: number): Promise<Recording | null> => {
+    return new Promise((resolve, reject) => {
+      try {
+        const row = getStatements().getRecordingById.get(recordingId);
+        resolve((row as Recording | undefined) || null);
+      } catch (err) {
+        reject(err);
+      }
+    });
+  },
+
   createComment: (comment: TimeRangeComment): Promise<number> => {
     return new Promise((resolve, reject) => {
       try {
@@ -380,6 +421,17 @@ export const dbHelpers = {
           comment.created_at,
         );
         resolve(info.lastInsertRowid as number);
+      } catch (err) {
+        reject(err);
+      }
+    });
+  },
+
+  getCommentById: (commentId: number): Promise<TimeRangeComment | null> => {
+    return new Promise((resolve, reject) => {
+      try {
+        const row = getStatements().getCommentById.get(commentId);
+        resolve((row as TimeRangeComment | undefined) || null);
       } catch (err) {
         reject(err);
       }

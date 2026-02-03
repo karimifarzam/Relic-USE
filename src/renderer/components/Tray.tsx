@@ -206,7 +206,7 @@ function Tray({ onStartEarning }: TrayProps): JSX.Element {
 
   useEffect(() => {
     const modeListener = window.electron.ipcRenderer.on(
-      'set-mode' as any,
+      'set-mode',
       (mode) => {
         setActiveTab(mode as 'passive' | 'tasks');
         if (mode === 'passive') {
@@ -515,35 +515,6 @@ function Tray({ onStartEarning }: TrayProps): JSX.Element {
       }
     };
   }, []);
-
-  // Add effect to log session ID changes
-  useEffect(() => {
-    console.log('Current session ID changed:', currentSessionId);
-  }, [currentSessionId]);
-
-  // Add effect to handle sensitive content detection
-  useEffect(() => {
-    const handleSensitiveContent = () => {
-      if (isRecording) {
-        if (captureInterval.current) {
-          clearInterval(captureInterval.current);
-          captureInterval.current = null;
-        }
-        setIsPaused(true);
-      }
-    };
-
-    window.electron.ipcRenderer.on(
-      'stop-recording-sensitive',
-      handleSensitiveContent,
-    );
-
-    return () => {
-      window.electron.ipcRenderer.removeAllListeners(
-        'stop-recording-sensitive',
-      );
-    };
-  }, [isRecording]);
 
   return (
     <div className={`w-full max-w-[305px] p-5 min-h-screen ${isDark ? 'bg-industrial-black-primary' : 'bg-white'}`}>

@@ -1112,12 +1112,14 @@ function Editor() {
 
   return (
     <main className={`min-h-screen ${isDark ? 'bg-industrial-black-primary' : 'bg-white'}`}>
-      <div className="p-6">
-        <div className="flex items-center justify-between mb-6">
-          <h1 className={`text-2xl font-mono font-light tracking-tight ${isDark ? 'text-white' : 'text-gray-900'}`}>
-            EDITOR
-          </h1>
-          <div className="flex items-center gap-2">
+      <div className="py-6">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
+          <div className="flex items-center gap-4 sm:self-start sm:pt-1">
+            <h1 className={`text-2xl font-mono font-light tracking-tight ${isDark ? 'text-white' : 'text-gray-900'}`}>
+              EDITOR
+            </h1>
+          </div>
+          <div className="flex gap-2 min-h-[38px] items-center">
             {hasUnsavedChanges && (
               <>
                 <button

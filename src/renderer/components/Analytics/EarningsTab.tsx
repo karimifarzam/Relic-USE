@@ -84,7 +84,7 @@ interface EarningsTabProps {
               <div className="flex justify-center items-center mt-1 mb-4 flex-1">
                 <div
                   ref={(el) => (statRefs.current[index] = el)}
-                  className={`text-2xl font-mono font-light relative group/tooltip ${isDark ? 'text-white' : 'text-gray-900'}`}
+                  className={`text-[28px] font-sans font-semibold tracking-tight relative group/tooltip ${isDark ? 'text-white' : 'text-gray-900'}`}
                   title={formatFullNumber(stat.value)}
                 >
                   {formatNumber(stat.value)}

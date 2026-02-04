@@ -1,31 +1,28 @@
 import React from 'react';
 import { useNavigate } from 'react-router-dom';
 import deleteIcon from '../../../../assets/icons/delete.svg';
-import pointsIcon from '../../../../assets/icons/points.svg';
 import { useTheme } from '../../contexts/ThemeContext';
 
 interface RecordingCardProps {
   title: string;
   date: string;
-  points: number;
-  duration: string;
   type: string;
   thumbnail: string;
   sessionId: number;
   onDelete?: () => void;
   approvalState?: 'draft' | 'submitted' | 'approved' | 'rejected';
+  footerAction?: React.ReactNode;
 }
 
 function RecordingCard({
   title,
   date,
-  points,
-  duration,
   type,
   thumbnail,
   sessionId,
   onDelete,
   approvalState = 'draft',
+  footerAction,
 }: RecordingCardProps) {
   const navigate = useNavigate();
   const { isDark } = useTheme();
@@ -76,8 +73,8 @@ function RecordingCard({
           alt={title}
           className="w-full h-full object-contain opacity-90"
         />
-        <div className={`absolute bottom-2 right-2 px-2 py-1 rounded text-[10px] font-mono tracking-industrial ${isDark ? 'bg-black/90 text-white border border-industrial-border-subtle' : 'bg-white/90 text-gray-900 border border-gray-300'}`}>
-          {duration}
+        <div className={`absolute top-2 left-2 px-1.5 py-0.5 rounded text-[8px] uppercase tracking-industrial-wide font-mono ${isDark ? 'bg-black/90 border border-industrial-border-subtle text-white' : 'bg-white/90 border border-gray-300 text-gray-700'}`}>
+          {type === 'tasked' ? 'Task' : 'Passive'}
         </div>
         <button
           className={`absolute top-2 right-2 p-1.5 rounded border transition-colors ${isDark ? 'bg-black/90 border-industrial-border-subtle hover:bg-industrial-red' : 'bg-white/90 border-gray-300 hover:bg-red-500'}`}
@@ -88,22 +85,20 @@ function RecordingCard({
           <img src={deleteIcon} alt="" className={`w-3.5 h-3.5 ${isDark ? 'invert brightness-0' : ''}`} />
         </button>
       </div>
-      <div className={`p-3 border-t ${isDark ? 'border-industrial-border-subtle' : 'border-gray-200'}`}>
-        <h4 className={`text-[11px] font-mono mb-2 line-clamp-1 tracking-tight ${isDark ? 'text-white' : 'text-gray-900'}`}>{title}</h4>
-        <div className={`flex items-center gap-2 text-[9px] ${isDark ? 'text-industrial-white-tertiary' : 'text-gray-500'}`}>
-          <div className="flex items-center gap-1">
-            <img src={pointsIcon} alt="" className="w-2.5 h-2.5 opacity-40" />
-            <span className="font-mono uppercase tracking-industrial">{points} PTS</span>
+      <div className={`p-2.5 border-t ${isDark ? 'border-industrial-border-subtle' : 'border-gray-200'}`}>
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0">
+            <h4 className={`text-[11px] font-mono mb-1 line-clamp-1 tracking-tight ${isDark ? 'text-white' : 'text-gray-900'}`}>
+              {title}
+            </h4>
           </div>
-          <div className={`w-1 h-1 rounded-full ${isDark ? 'bg-industrial-white-tertiary' : 'bg-gray-400'}`} />
-          <div className="flex items-center">
-            <span className="font-mono">{date}</span>
-          </div>
-          <div className="flex items-center ml-auto">
-            <span className={`px-1.5 py-0.5 rounded text-[8px] uppercase tracking-industrial-wide font-mono ${isDark ? 'bg-industrial-black-tertiary border border-industrial-border-subtle' : 'bg-gray-100 border border-gray-300 text-gray-700'}`}>
-              {type === 'tasked' ? 'Task' : 'Passive'}
-            </span>
-          </div>
+          <span />
+        </div>
+        <div className="mt-1 flex items-end justify-between">
+          <span className={`text-[9px] font-mono ${isDark ? 'text-industrial-white-tertiary' : 'text-gray-500'}`}>
+            {date}
+          </span>
+          {footerAction ? <div className="flex justify-end pointer-events-auto">{footerAction}</div> : null}
         </div>
       </div>
     </div>

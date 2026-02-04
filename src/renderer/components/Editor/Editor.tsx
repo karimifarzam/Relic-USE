@@ -1,3 +1,4 @@
+/* @refresh reset */
 import React, { useState, useRef, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useTheme } from '../../contexts/ThemeContext';
@@ -18,8 +19,12 @@ import {
   CirclePlus,
   Pencil,
   Edit2,
+  Send,
+  Undo2,
 } from 'lucide-react';
 import myBoard from '../../../../assets/icons/myBoard.svg';
+import EditorSubmitToast, { EditorSubmitToastHandle } from './EditorSubmitToast';
+import TimelineScrollbar from './TimelineScrollbar';
 
 interface Screenshot {
   id: string;
@@ -37,6 +42,20 @@ interface TimeRangeComment {
   comment: string;
   created_at: string;
 }
+
+type UndoAction =
+  | {
+      type: 'recordingDeletion';
+      screenshots: Screenshot[];
+      pendingDeletions: number[];
+      selectedIndices: number[];
+      currentIndex: number;
+    }
+  | {
+      type: 'commentDeletion';
+      comment: TimeRangeComment;
+      insertIndex: number;
+    };
 
 interface Recording {
   id?: number;
@@ -160,7 +179,7 @@ const ScreenshotTimeline: React.FC<{
   return (
     <div
       ref={timelineRef}
-      className={`relative h-24 cursor-pointer select-none border ${isDark ? 'bg-industrial-black-tertiary border-industrial-border-subtle' : 'bg-gray-100 border-gray-300'}`}
+      className="relative h-24 cursor-pointer select-none"
       role="grid"
       aria-label="Screenshot timeline"
     >
@@ -181,8 +200,9 @@ const ScreenshotTimeline: React.FC<{
             } ${currentIndex === index ? isDark ? 'ring-2 ring-industrial-orange' : 'ring-2 ring-blue-500' : ''}`}
             style={{
               backgroundImage: `url(${screenshot.imageUrl})`,
-              backgroundSize: 'cover',
+              backgroundSize: 'contain',
               backgroundPosition: 'center',
+              backgroundRepeat: 'no-repeat',
             }}
             onMouseDown={(e) => handleMouseDown(e, index)}
             onKeyDown={(e) => {
@@ -354,7 +374,8 @@ const CommentSidebar: React.FC<{
   currentTime?: number;
   endTime?: number;
   isDark: boolean;
-}> = ({ comments, onAddComment, onDeleteComment, onUpdateComment, commentToEdit, currentTime = 0, endTime, isDark }) => {
+  footer?: React.ReactNode;
+}> = ({ comments, onAddComment, onDeleteComment, onUpdateComment, commentToEdit, currentTime = 0, endTime, isDark, footer }) => {
   const [isAdding, setIsAdding] = useState(false);
   const [editingId, setEditingId] = useState<number | null>(null);
   const [newComment, setNewComment] = useState('');
@@ -430,7 +451,7 @@ const CommentSidebar: React.FC<{
   };
 
   return (
-    <div className={`w-[400px] rounded-lg p-4 shadow-industrial flex flex-col max-h-[600px] ${isDark ? 'bg-industrial-black-secondary border border-industrial-border' : 'bg-white border border-gray-200'}`}>
+    <div className={`w-[400px] rounded-lg p-4 shadow-industrial flex flex-col h-[570px] ${isDark ? 'bg-industrial-black-secondary border border-industrial-border' : 'bg-white border border-gray-200'}`}>
       <div className="mb-4 flex-shrink-0">
         <div className={`rounded px-3 py-2 ${isDark ? 'bg-industrial-orange/10 border border-industrial-orange/20' : 'bg-blue-50 border border-blue-200'}`}>
           <p className={`text-[10px] uppercase tracking-industrial-wide font-mono font-bold ${isDark ? 'text-industrial-orange' : 'text-blue-600'}`}>
@@ -496,7 +517,7 @@ const CommentSidebar: React.FC<{
         </div>
       )}
 
-      <div className="overflow-y-auto space-y-3 min-h-0 max-h-[400px] hide-scrollbar show-scrollbar-on-hover">
+      <div className="overflow-y-auto space-y-3 min-h-0 flex-1 hide-scrollbar show-scrollbar-on-hover">
         {comments.map((comment) => (
           <div key={comment.id} className="relative">
             {editingId === comment.id ? (
@@ -599,6 +620,8 @@ const CommentSidebar: React.FC<{
           <CirclePlus className={`w-4 h-4 ${isDark ? 'text-industrial-orange' : 'text-blue-500'}`} />
         </button>
       )}
+
+      {footer ? <div className="mt-3 flex justify-end gap-2 flex-shrink-0">{footer}</div> : null}
     </div>
   );
 };
@@ -658,7 +681,7 @@ export const ScreenshotEditor: React.FC<ScreenshotEditorProps & { isDark: boolea
     };
 
     return (
-      <div className={`relative aspect-video bg-black rounded-lg overflow-hidden border shadow-industrial ${isDark ? 'border-industrial-border' : 'border-gray-300'}`}>
+      <div className={`relative w-full h-[570px] bg-black rounded-lg overflow-hidden border shadow-industrial ${isDark ? 'border-industrial-border' : 'border-gray-300'}`}>
         {screenshots.length > 0 && screenshots[currentIndex] && (
           <>
             <img
@@ -711,10 +734,56 @@ function Editor() {
   const [comments, setComments] = useState<TimeRangeComment[]>([]);
   const [selectedIndices, setSelectedIndices] = useState<number[]>([]);
   const [currentIndex, setCurrentIndex] = useState(0);
-  const [zoomLevel, setZoomLevel] = useState(50);
+  const timelineScrollRef = useRef<HTMLDivElement>(null);
+  const [timelineViewportWidth, setTimelineViewportWidth] = useState(0);
+  // Controls the per-clip width in the timeline (smaller = more clips visible).
+  const [timelineZoom, setTimelineZoom] = useState(50);
   const [commentToEdit, setCommentToEdit] = useState<number | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isDeletingClip, setIsDeletingClip] = useState(false);
+  const [undoStack, setUndoStack] = useState<UndoAction[]>([]);
+  const submitToastRef = useRef<EditorSubmitToastHandle>(null);
   const navigate = useNavigate();
   const { isDark } = useTheme();
+
+  const baseMinTimelineZoom = 25;
+  const computedMinTimelineZoom =
+    screenshots.length > 0 && timelineViewportWidth > 0
+      ? Math.ceil(timelineViewportWidth / screenshots.length)
+      : baseMinTimelineZoom;
+  // Prevent zooming out so far that the timeline becomes narrower than the viewport (which creates a right-side gutter).
+  const minTimelineZoom = Math.max(baseMinTimelineZoom, computedMinTimelineZoom);
+  const maxTimelineZoom = Math.max(200, minTimelineZoom + 200);
+  const timelineContentWidth =
+    screenshots.length > 0 ? screenshots.length * timelineZoom : timelineViewportWidth;
+  const timelineOverflow =
+    timelineViewportWidth > 0 ? Math.max(0, timelineContentWidth - timelineViewportWidth) : 0;
+  const showTimelineScrollbar = timelineOverflow > 1;
+
+  useEffect(() => {
+    // Keep track of the available timeline viewport width so we can clamp zoom-out appropriately.
+    const el = timelineScrollRef.current;
+    if (!el) return undefined;
+
+    const update = () => {
+      setTimelineViewportWidth(el.clientWidth);
+    };
+    update();
+
+    if (typeof ResizeObserver !== 'undefined') {
+      const observer = new ResizeObserver(() => update());
+      observer.observe(el);
+      return () => observer.disconnect();
+    }
+
+    window.addEventListener('resize', update);
+    return () => window.removeEventListener('resize', update);
+  }, []);
+
+  useEffect(() => {
+    // If the viewport grows or screenshot count shrinks, clamp up so we never show blank space.
+    setTimelineZoom((z) => (z < minTimelineZoom ? minTimelineZoom : z));
+  }, [minTimelineZoom]);
 
   useEffect(() => {
     // Listen for load-editor events from the main process
@@ -737,6 +806,10 @@ function Editor() {
         }));
         setScreenshots(convertedScreenshots);
         setOriginalScreenshots(convertedScreenshots);
+        setPendingDeletions([]);
+        setHasUnsavedChanges(false);
+        setSelectedIndices([]);
+        setUndoStack([]);
 
         // Load comments
         try {
@@ -795,6 +868,10 @@ function Editor() {
               }));
               setScreenshots(convertedScreenshots);
               setOriginalScreenshots(convertedScreenshots);
+              setPendingDeletions([]);
+              setHasUnsavedChanges(false);
+              setSelectedIndices([]);
+              setUndoStack([]);
 
               // Load comments for the draft session
               try {
@@ -852,6 +929,18 @@ function Editor() {
     const newPendingDeletions = indices
       .filter((index) => index >= 0 && index < screenshots.length && screenshots[index])
       .map((index) => Number(screenshots[index].id));
+    if (newPendingDeletions.length === 0) return;
+
+    setUndoStack((prev) => [
+      ...prev,
+      {
+        type: 'recordingDeletion',
+        screenshots: [...screenshots],
+        pendingDeletions: [...pendingDeletions],
+        selectedIndices: [...selectedIndices],
+        currentIndex,
+      },
+    ]);
     setPendingDeletions((prev) => [...prev, ...newPendingDeletions]);
 
     // Update UI
@@ -887,14 +976,12 @@ function Editor() {
           setScreenshots((prev) =>
             prev.map((s, i) => (i === index ? { ...s, label } : s)),
           );
-          setHasUnsavedChanges(true);
         }
       } else {
         // For demo without electron
         setScreenshots((prev) =>
           prev.map((s, i) => (i === index ? { ...s, label } : s)),
         );
-        setHasUnsavedChanges(true);
       }
     } catch (error) {
       console.error('Failed to update label:', error);
@@ -925,8 +1012,8 @@ function Editor() {
     setSelectedIndices(indices);
   };
 
-  const handleSave = async () => {
-    if (!currentSessionId) return;
+  const handleSave = async (): Promise<boolean> => {
+    if (!currentSessionId) return false;
 
     try {
       // Delete all recordings in parallel using Promise.all
@@ -945,31 +1032,185 @@ function Editor() {
       setPendingDeletions([]);
       setHasUnsavedChanges(false);
       setOriginalScreenshots(screenshots);
+      // After persisting deletions, we can no longer undo them.
+      setUndoStack((prev) => prev.filter((a) => a.type === 'commentDeletion'));
 
       // Show success message
-      if (window.electron?.ipcRenderer?.sendMessage) {
-        window.electron.ipcRenderer.sendMessage('show-success-notification', {
-          title: 'Success',
-          message: 'Changes saved successfully',
-        });
-      }
+      window.electron?.ipcRenderer?.sendMessage?.('show-success-notification', {
+        title: 'Success',
+        message: 'Changes saved successfully',
+      });
+
+      return true;
     } catch (error) {
       console.error('Failed to save changes:', error);
       // Show error message
-      if (window.electron?.ipcRenderer?.sendMessage) {
-        window.electron.ipcRenderer.sendMessage('show-error-notification', {
-          title: 'Error',
-          message: 'Failed to save changes',
-        });
-      }
+      window.electron?.ipcRenderer?.sendMessage?.('show-error-notification', {
+        title: 'Error',
+        message: 'Failed to save changes',
+      });
+      return false;
     }
   };
 
-  const handleCancel = () => {
-    // Revert all changes
-    setScreenshots(originalScreenshots);
-    setPendingDeletions([]);
-    setHasUnsavedChanges(false);
+  const handleUndo = async () => {
+    if (undoStack.length === 0) return;
+
+    const action = undoStack[undoStack.length - 1];
+    setUndoStack((prev) => prev.slice(0, -1));
+
+    if (action.type === 'recordingDeletion') {
+      setScreenshots(action.screenshots);
+      setPendingDeletions(action.pendingDeletions);
+      setSelectedIndices(action.selectedIndices);
+      setCurrentIndex(action.currentIndex);
+      setHasUnsavedChanges(action.pendingDeletions.length > 0);
+      return;
+    }
+
+    // Comment deletion undo: recreate the comment in the DB and reinsert in the UI.
+    try {
+      const commentToRestore: TimeRangeComment = {
+        session_id: action.comment.session_id,
+        start_time: action.comment.start_time,
+        end_time: action.comment.end_time,
+        comment: action.comment.comment,
+        created_at: action.comment.created_at,
+      };
+
+      if (window.electron?.ipcRenderer?.invoke) {
+        const newId = (await window.electron.ipcRenderer.invoke(
+          'create-comment',
+          {
+            ...commentToRestore,
+            id: Date.now(), // temporary UI id; DB returns the real id
+          },
+        )) as number;
+
+        setComments((prev) => {
+          const next = [...prev];
+          const insertAt = Math.min(Math.max(action.insertIndex, 0), next.length);
+          next.splice(insertAt, 0, { ...commentToRestore, id: newId });
+          return next;
+        });
+      } else {
+        // Demo mode: just reinsert locally
+        setComments((prev) => {
+          const next = [...prev];
+          const insertAt = Math.min(Math.max(action.insertIndex, 0), next.length);
+          next.splice(insertAt, 0, { ...commentToRestore, id: Date.now() });
+          return next;
+        });
+      }
+    } catch (error) {
+      console.error('Failed to undo comment deletion:', error);
+      window.electron?.ipcRenderer?.sendMessage?.('show-error-notification', {
+        title: 'Error',
+        message: 'Failed to undo deletion',
+      });
+    }
+  };
+
+  const handleDeleteClip = async () => {
+    if (!currentSessionId || isDeletingClip) return;
+
+    try {
+      setIsDeletingClip(true);
+
+      let confirmed = false;
+      if (window.electron?.ipcRenderer?.invoke) {
+        confirmed = (await window.electron.ipcRenderer.invoke(
+          'show-delete-confirmation',
+          {
+            title: 'Delete Clip',
+            message:
+              'This will permanently delete this clip and all associated recordings. Continue?',
+          },
+        )) as boolean;
+      } else {
+        confirmed = window.confirm(
+          'This will permanently delete this clip and all associated recordings. Continue?',
+        );
+      }
+
+      if (!confirmed) return;
+
+      if (window.electron?.ipcRenderer?.invoke) {
+        await window.electron.ipcRenderer.invoke('delete-session', currentSessionId);
+      }
+
+      // Reset local state and return to dashboard
+      setScreenshots([]);
+      setOriginalScreenshots([]);
+      setPendingDeletions([]);
+      setHasUnsavedChanges(false);
+      setComments([]);
+      setCurrentSessionId(null);
+      setSelectedIndices([]);
+      setUndoStack([]);
+
+      window.electron?.ipcRenderer?.sendMessage?.('show-success-notification', {
+        title: 'Deleted',
+        message: 'Clip deleted successfully',
+      });
+
+      navigate('/');
+    } catch (error) {
+      console.error('Failed to delete clip:', error);
+      window.electron?.ipcRenderer?.sendMessage?.('show-error-notification', {
+        title: 'Error',
+        message: 'Failed to delete clip',
+      });
+    } finally {
+      setIsDeletingClip(false);
+    }
+  };
+
+  const handleSubmit = async () => {
+    if (!currentSessionId || isSubmitting) return;
+
+    try {
+      setIsSubmitting(true);
+
+      // If there are pending deletions, save them before submitting.
+      if (pendingDeletions.length > 0) {
+        const saved = await handleSave();
+        if (!saved) return;
+      }
+
+      const result = await window.electron?.ipcRenderer?.invoke?.(
+        'submit-session',
+        currentSessionId,
+      );
+
+      if (result?.success) {
+        const toastMessage = `Session submitted successfully! +${result.pointsEarned || 0} points earned`;
+        submitToastRef.current?.show({ title: 'Submitted', message: toastMessage, type: 'success' });
+
+        window.electron?.ipcRenderer?.sendMessage?.('show-success-notification', {
+          title: 'Submitted',
+          message: toastMessage,
+        });
+        window.setTimeout(() => navigate('/'), 1800);
+      } else {
+        const errorMessage = result?.error || 'Failed to submit session';
+        submitToastRef.current?.show({ title: 'Error', message: errorMessage, type: 'error' });
+        window.electron?.ipcRenderer?.sendMessage?.('show-error-notification', {
+          title: 'Error',
+          message: errorMessage,
+        });
+      }
+    } catch (error: any) {
+      console.error('Submit error:', error);
+      const errorMessage = error?.message || 'Failed to submit session';
+      submitToastRef.current?.show({ title: 'Error', message: errorMessage, type: 'error' });
+      window.electron?.ipcRenderer?.sendMessage?.('show-error-notification', {
+        title: 'Error',
+        message: errorMessage,
+      });
+    } finally {
+      setIsSubmitting(false);
+    }
   };
 
   const handleBack = () => {
@@ -1035,7 +1276,6 @@ function Editor() {
         const commentId = Date.now();
         setComments(prev => [...prev, { ...newComment, id: commentId }]);
       }
-      setHasUnsavedChanges(true);
     } catch (error) {
       console.error('Failed to create comment:', error);
       if (window.electron?.ipcRenderer?.sendMessage) {
@@ -1049,16 +1289,26 @@ function Editor() {
 
   const handleDeleteComment = async (commentId: string) => {
     try {
+      const numericId = Number(commentId);
+      const deleteIndex = comments.findIndex((c) => c.id === numericId);
+      const commentToDelete = deleteIndex >= 0 ? comments[deleteIndex] : undefined;
+
       if (window.electron?.ipcRenderer?.invoke) {
         await window.electron.ipcRenderer.invoke(
           'delete-comment',
-          Number(commentId),
+          numericId,
         );
       }
 
       // Update state regardless of API call
-      setComments(prev => prev.filter(c => c.id !== Number(commentId)));
-      setHasUnsavedChanges(true);
+      setComments(prev => prev.filter(c => c.id !== numericId));
+
+      if (commentToDelete) {
+        setUndoStack((prev) => [
+          ...prev,
+          { type: 'commentDeletion', comment: commentToDelete, insertIndex: deleteIndex },
+        ]);
+      }
     } catch (error) {
       console.error('Failed to delete comment:', error);
       if (window.electron?.ipcRenderer?.sendMessage) {
@@ -1090,7 +1340,6 @@ function Editor() {
           ? { ...c, start_time: startTime, end_time: endTime, comment }
           : c
       ));
-      setHasUnsavedChanges(true);
     } catch (error) {
       console.error('Failed to update comment:', error);
       if (window.electron?.ipcRenderer?.sendMessage) {
@@ -1111,37 +1360,46 @@ function Editor() {
   };
 
   return (
-    <main className={`min-h-screen ${isDark ? 'bg-industrial-black-primary' : 'bg-white'}`}>
-      <div className="p-6">
-        <div className="flex items-center justify-between mb-6">
-          <h1 className={`text-2xl font-mono font-light tracking-tight ${isDark ? 'text-white' : 'text-gray-900'}`}>
-            EDITOR
-          </h1>
-          <div className="flex items-center gap-2">
-            {hasUnsavedChanges && (
-              <>
-                <button
-                  type="button"
-                  onClick={handleCancel}
-                  className={`px-4 py-2 text-[10px] uppercase tracking-industrial-wide font-mono font-bold rounded-lg hover-lift transition-all ${isDark ? 'text-industrial-white-secondary hover:text-white bg-industrial-black-secondary border border-industrial-border' : 'text-gray-600 hover:text-gray-900 bg-gray-100 border border-gray-300'}`}
-                >
-                  <X className="w-3.5 h-3.5 inline mr-1.5" strokeWidth={1.5} />
-                  Cancel
-                </button>
-                <button
-                  type="button"
-                  onClick={handleSave}
-                  className={`px-4 py-2 text-[10px] uppercase tracking-industrial-wide font-mono font-bold rounded-lg hover-lift transition-all shadow-industrial-sm ${isDark ? 'text-black bg-industrial-orange hover:bg-industrial-orange/90 border border-industrial-orange/20' : 'text-white bg-blue-500 hover:bg-blue-600 border border-blue-600'}`}
-                >
-                  <Save className="w-3.5 h-3.5 inline mr-1.5" strokeWidth={1.5} />
-                  Save Changes
-                </button>
-              </>
-            )}
+    <main className={`min-h-0 ${isDark ? 'bg-industrial-black-primary' : 'bg-white'}`}>
+      <EditorSubmitToast ref={submitToastRef} isDark={isDark} />
+      <div className="py-6">
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
+          <div className="flex items-center gap-4 sm:self-start sm:pt-1">
+            <h1 className={`text-2xl font-mono font-light tracking-tight ${isDark ? 'text-white' : 'text-gray-900'}`}>
+              EDITOR
+            </h1>
+          </div>
+          <div className="flex gap-2 min-h-[38px] items-center">
+            <button
+              type="button"
+              onClick={handleDeleteClip}
+              disabled={!currentSessionId || isDeletingClip}
+              className={`px-4 py-2 rounded-lg text-[10px] uppercase tracking-industrial-wide font-mono font-bold transition-all hover-lift disabled:opacity-50 disabled:cursor-not-allowed hover:text-industrial-red ${
+                isDark
+                  ? 'bg-industrial-black-secondary border border-industrial-border text-industrial-white-secondary hover:border-industrial-red/30'
+                  : 'bg-white border border-gray-300 text-gray-700 hover:border-red-300'
+              }`}
+            >
+              <Trash2 className="w-3.5 h-3.5 inline mr-1.5" strokeWidth={1.5} />
+              Delete
+            </button>
+            <button
+              type="button"
+              onClick={handleSubmit}
+              disabled={!currentSessionId || isSubmitting}
+              className={`px-4 py-2 text-[10px] uppercase tracking-industrial-wide font-mono font-bold rounded-lg hover-lift transition-all shadow-industrial-sm disabled:opacity-50 disabled:cursor-not-allowed ${
+                isDark
+                  ? 'text-black bg-industrial-orange hover:bg-industrial-orange/90 border border-industrial-orange/20'
+                  : 'text-white bg-blue-500 hover:bg-blue-600 border border-blue-600'
+              }`}
+            >
+              <Send className="w-3.5 h-3.5 inline mr-1.5" strokeWidth={1.5} />
+              Submit
+            </button>
           </div>
         </div>
 
-        <div className="flex gap-6 mb-6">
+        <div className="flex gap-6 mb-5">
           {/* Screenshot Editor Section */}
           <div className="flex-1">
             <ScreenshotEditor
@@ -1172,12 +1430,43 @@ function Editor() {
                 : screenshots[currentIndex + 1]?.time ?? (screenshots[currentIndex]?.time ?? currentIndex) + 1
             }
             isDark={isDark}
+            footer={
+              <>
+                <button
+                  type="button"
+                  onClick={() => void handleUndo()}
+                  disabled={undoStack.length === 0}
+                  className={`px-4 py-2 text-[10px] uppercase tracking-industrial-wide font-mono font-bold rounded-lg hover-lift transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
+                    isDark
+                      ? 'text-industrial-white-secondary hover:text-white bg-industrial-black-secondary border border-industrial-border'
+                      : 'text-gray-600 hover:text-gray-900 bg-gray-100 border border-gray-300'
+                  }`}
+                >
+                  <Undo2 className="w-3.5 h-3.5 inline mr-1.5" strokeWidth={1.5} />
+                  Undo
+                </button>
+                <button
+                  type="button"
+                  onClick={() => void handleSave()}
+                  disabled={pendingDeletions.length === 0 || !currentSessionId}
+                  className={`px-4 py-2 text-[10px] uppercase tracking-industrial-wide font-mono font-bold rounded-lg hover-lift transition-all shadow-industrial-sm disabled:opacity-50 disabled:cursor-not-allowed ${
+                    isDark
+                      ? 'text-black bg-industrial-orange hover:bg-industrial-orange/90 border border-industrial-orange/20'
+                      : 'text-white bg-blue-500 hover:bg-blue-600 border border-blue-600'
+                  }`}
+                  title={pendingDeletions.length > 0 ? 'Save pending deletions' : 'No pending deletions'}
+                >
+                  <Save className="w-3.5 h-3.5 inline mr-1.5" strokeWidth={1.5} />
+                  Save Changes
+                </button>
+              </>
+            }
           />
         </div>
 
         {/* Timeline Controls */}
         <div className={`border rounded-lg ${isDark ? 'border-industrial-border bg-industrial-black-secondary' : 'border-gray-200 bg-white'}`}>
-          <div className={`flex items-center justify-between p-4 border-b ${isDark ? 'border-industrial-border-subtle' : 'border-gray-200'}`}>
+          <div className={`flex items-center justify-between p-3 border-b ${isDark ? 'border-industrial-border-subtle' : 'border-gray-200'}`}>
             <div className="flex items-center gap-2">
               <button
                 type="button"
@@ -1213,36 +1502,75 @@ function Editor() {
                 Zoom
               </span>
               <div className="flex items-center gap-3">
-                <ZoomOut className={`w-4 h-4 ${isDark ? 'text-industrial-white-tertiary' : 'text-gray-500'}`} strokeWidth={1.5} />
+                <button
+                  type="button"
+                  onClick={() => setTimelineZoom((v) => Math.max(minTimelineZoom, v - 10))}
+                  className={`p-1.5 rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed ${isDark ? 'hover:bg-industrial-black-tertiary' : 'hover:bg-gray-100'}`}
+                  aria-label="Zoom out timeline"
+                  disabled={timelineZoom <= minTimelineZoom}
+                >
+                  <ZoomOut className={`w-4 h-4 ${isDark ? 'text-industrial-white-tertiary' : 'text-gray-500'}`} strokeWidth={1.5} />
+                </button>
                 <input
                   type="range"
-                  min="25"
-                  max="200"
-                  value={zoomLevel}
-                  onChange={(e) => setZoomLevel(Number(e.target.value))}
+                  min={minTimelineZoom}
+                  max={maxTimelineZoom}
+                  value={timelineZoom}
+                  onChange={(e) => setTimelineZoom(Number(e.target.value))}
                   className={`w-32 h-1 rounded-full appearance-none border [&::-webkit-slider-thumb]:appearance-none [&::-webkit-slider-thumb]:w-3 [&::-webkit-slider-thumb]:h-3 [&::-webkit-slider-thumb]:rounded-full [&::-webkit-slider-thumb]:cursor-pointer [&::-webkit-slider-thumb]:border ${isDark ? 'bg-industrial-black-tertiary border-industrial-border-subtle [&::-webkit-slider-thumb]:bg-industrial-orange [&::-webkit-slider-thumb]:border-industrial-orange/20' : 'bg-gray-200 border-gray-300 [&::-webkit-slider-thumb]:bg-blue-500 [&::-webkit-slider-thumb]:border-blue-600'}`}
                   aria-label="Zoom level"
                 />
-                <ZoomIn className={`w-4 h-4 ${isDark ? 'text-industrial-white-tertiary' : 'text-gray-500'}`} strokeWidth={1.5} />
+                <button
+                  type="button"
+                  onClick={() => setTimelineZoom((v) => Math.min(maxTimelineZoom, v + 10))}
+                  className={`p-1.5 rounded transition-colors disabled:opacity-30 disabled:cursor-not-allowed ${isDark ? 'hover:bg-industrial-black-tertiary' : 'hover:bg-gray-100'}`}
+                  aria-label="Zoom in timeline"
+                  disabled={timelineZoom >= maxTimelineZoom}
+                >
+                  <ZoomIn className={`w-4 h-4 ${isDark ? 'text-industrial-white-tertiary' : 'text-gray-500'}`} strokeWidth={1.5} />
+                </button>
               </div>
             </div>
           </div>
 
           <div className="relative">
-            <ScreenshotTimeline
-              screenshots={screenshots}
-              selectedIndices={selectedIndices}
-              currentIndex={currentIndex}
-              onSelect={handleSelect}
-              onSelectionChange={handleSelectionChange}
-              isDark={isDark}
-            />
-            <CommentIndicatorTimeline
-              comments={comments}
-              screenshots={screenshots}
-              isDark={isDark}
-              onCommentClick={handleCommentTimelineClick}
-            />
+            <div
+              ref={timelineScrollRef}
+              className={`relative overflow-x-auto no-scrollbar border ${
+                isDark
+                  ? 'bg-industrial-black-tertiary border-industrial-border-subtle'
+                  : 'bg-gray-100 border-gray-300'
+              }`}
+            >
+              <div
+                className="relative"
+                style={{
+                  width: timelineContentWidth > 0 ? timelineContentWidth : '100%',
+                }}
+              >
+                <ScreenshotTimeline
+                  screenshots={screenshots}
+                  selectedIndices={selectedIndices}
+                  currentIndex={currentIndex}
+                  onSelect={handleSelect}
+                  onSelectionChange={handleSelectionChange}
+                  isDark={isDark}
+                />
+                <CommentIndicatorTimeline
+                  comments={comments}
+                  screenshots={screenshots}
+                  isDark={isDark}
+                  onCommentClick={handleCommentTimelineClick}
+                />
+              </div>
+            </div>
+            {showTimelineScrollbar && (
+              <TimelineScrollbar
+                scrollRef={timelineScrollRef}
+                contentWidth={timelineContentWidth}
+                isDark={isDark}
+              />
+            )}
           </div>
         </div>
       </div>

@@ -50,9 +50,11 @@ function SessionCard({
 
   // Memoize formatSessionDuration to prevent recreation on every render
   const formatSessionDuration = useCallback((seconds: number): string => {
-    const hours = Math.floor(seconds / 3600);
-    const minutes = Math.floor((seconds % 3600) / 60);
-    return `${hours}h ${minutes}m`;
+    const safeSeconds = Math.max(0, Math.floor(seconds));
+    const hours = Math.floor(safeSeconds / 3600);
+    const minutes = Math.floor((safeSeconds % 3600) / 60);
+    const secs = safeSeconds % 60;
+    return `${hours}h ${minutes}m ${secs}s`;
   }, []);
 
   // Fetch task details if session has a task_id
@@ -177,103 +179,99 @@ function SessionCard({
           )}
           <RecordingCard
             key={recordings[recordings.length - 1].id}
-            title={`Recording - ${recordings[recordings.length - 1].timestamp.toLocaleString()}`}
+            title={`Recording - Session #${session.id}`}
             date={formatSessionDuration(session.duration)}
-            points={0}
-            duration={formatSessionDuration(session.duration)}
             type={recordings[recordings.length - 1].type}
             thumbnail={recordings[recordings.length - 1].thumbnail}
             sessionId={session.id}
             onDelete={handleDeleteRecording}
             approvalState={session.approval_state}
-          />
-          <div className="flex justify-end items-center mt-3">
-            {canSubmit && onSubmit && (
-              <>
+            footerAction={
+              canSubmit && onSubmit ? (
                 <button
                   type="button"
                   disabled={isSubmitting}
+                  onMouseDown={(e) => e.stopPropagation()}
                   onClick={(e) => {
                     e.stopPropagation();
                     setShowConfirmDialog(true);
                   }}
-                  className={`px-4 py-2 rounded-lg text-[10px] uppercase tracking-industrial-wide font-mono font-bold transition-all border disabled:opacity-50 disabled:cursor-not-allowed ${isDark ? 'bg-industrial-orange text-black border-industrial-orange/20 shadow-industrial hover-lift hover:shadow-industrial-lg' : 'bg-blue-500 text-white border-blue-600'}`}
+                  className={`px-2 py-1 rounded-md text-[9px] uppercase tracking-industrial-wide font-mono font-bold transition-all border disabled:opacity-50 disabled:cursor-not-allowed hover-lift ${isDark ? 'bg-industrial-orange text-black border-industrial-orange/20 shadow-industrial hover:shadow-industrial-lg' : 'bg-blue-500 text-white border-blue-600 hover:bg-blue-600'}`}
                 >
                   {isSubmitting ? 'Uploading...' : 'Submit'}
                 </button>
+              ) : null
+            }
+          />
+          {/* Confirmation Dialog */}
+          {showConfirmDialog && (
+            <div
+              className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+              onClick={(e) => {
+                e.stopPropagation();
+                setShowConfirmDialog(false);
+              }}
+            >
+              <div
+                className={`w-full max-w-md p-6 rounded-lg border ${isDark ? 'bg-industrial-black-secondary border-industrial-border' : 'bg-white border-gray-300'}`}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <h3 className={`text-lg font-mono font-bold mb-4 ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                  Confirm Submission
+                </h3>
 
-                {/* Confirmation Dialog */}
-                {showConfirmDialog && (
-                  <div
-                    className="fixed inset-0 z-50 flex items-center justify-center bg-black/50"
+                <div className={`space-y-3 mb-6 ${isDark ? 'text-industrial-white-secondary' : 'text-gray-600'}`}>
+                  <div className={`p-3 rounded-lg border ${isDark ? 'bg-industrial-black-tertiary border-industrial-border' : 'bg-gray-50 border-gray-200'}`}>
+                    <div className="flex justify-between mb-2">
+                      <span className="text-sm font-mono">Duration:</span>
+                      <span className={`text-sm font-mono font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                        {formatSessionDuration(session.duration)}
+                      </span>
+                    </div>
+                    <div className="flex justify-between mb-2">
+                      <span className="text-sm font-mono">Recordings:</span>
+                      <span className={`text-sm font-mono font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                        {recordings.length}
+                      </span>
+                    </div>
+                    <div className="flex justify-between">
+                      <span className="text-sm font-mono">Comments:</span>
+                      <span className={`text-sm font-mono font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                        {comments}
+                      </span>
+                    </div>
+                  </div>
+
+                  <p className={`text-xs font-mono ${isDark ? 'text-yellow-400' : 'text-yellow-600'}`}>
+                    ⚠ Once submitted, this session cannot be edited.
+                  </p>
+                </div>
+
+                <div className="flex gap-3 justify-end">
+                  <button
+                    type="button"
                     onClick={(e) => {
                       e.stopPropagation();
                       setShowConfirmDialog(false);
                     }}
+                    className={`px-4 py-2 rounded-lg text-[10px] uppercase tracking-industrial-wide font-mono font-bold transition-all border ${isDark ? 'bg-industrial-black-tertiary text-white border-industrial-border hover:bg-industrial-black-primary' : 'bg-gray-100 text-gray-700 border-gray-300 hover:bg-gray-200'}`}
                   >
-                    <div
-                      className={`w-full max-w-md p-6 rounded-lg border ${isDark ? 'bg-industrial-black-secondary border-industrial-border' : 'bg-white border-gray-300'}`}
-                      onClick={(e) => e.stopPropagation()}
-                    >
-                      <h3 className={`text-lg font-mono font-bold mb-4 ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                        Confirm Submission
-                      </h3>
-
-                      <div className={`space-y-3 mb-6 ${isDark ? 'text-industrial-white-secondary' : 'text-gray-600'}`}>
-                        <div className={`p-3 rounded-lg border ${isDark ? 'bg-industrial-black-tertiary border-industrial-border' : 'bg-gray-50 border-gray-200'}`}>
-                          <div className="flex justify-between mb-2">
-                            <span className="text-sm font-mono">Duration:</span>
-                            <span className={`text-sm font-mono font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                              {formatSessionDuration(session.duration)}
-                            </span>
-                          </div>
-                          <div className="flex justify-between mb-2">
-                            <span className="text-sm font-mono">Recordings:</span>
-                            <span className={`text-sm font-mono font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                              {recordings.length}
-                            </span>
-                          </div>
-                          <div className="flex justify-between">
-                            <span className="text-sm font-mono">Comments:</span>
-                            <span className={`text-sm font-mono font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                              {comments}
-                            </span>
-                          </div>
-                        </div>
-
-                        <p className={`text-xs font-mono ${isDark ? 'text-yellow-400' : 'text-yellow-600'}`}>
-                          ⚠ Once submitted, this session cannot be edited.
-                        </p>
-                      </div>
-
-                      <div className="flex gap-3 justify-end">
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            setShowConfirmDialog(false);
-                          }}
-                          className={`px-4 py-2 rounded-lg text-[10px] uppercase tracking-industrial-wide font-mono font-bold transition-all border ${isDark ? 'bg-industrial-black-tertiary text-white border-industrial-border hover:bg-industrial-black-primary' : 'bg-gray-100 text-gray-700 border-gray-300 hover:bg-gray-200'}`}
-                        >
-                          Cancel
-                        </button>
-                        <button
-                          type="button"
-                          onClick={(e) => {
-                            e.stopPropagation();
-                            handleConfirmSubmit();
-                          }}
-                          className={`px-4 py-2 rounded-lg text-[10px] uppercase tracking-industrial-wide font-mono font-bold transition-all border ${isDark ? 'bg-industrial-orange text-black border-industrial-orange/20 shadow-industrial hover-lift hover:shadow-industrial-lg' : 'bg-blue-500 text-white border-blue-600 hover:bg-blue-600'}`}
-                        >
-                          Confirm Submit
-                        </button>
-                      </div>
-                    </div>
-                  </div>
-                )}
-              </>
-            )}
-          </div>
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => {
+                      e.stopPropagation();
+                      handleConfirmSubmit();
+                    }}
+                    className={`px-4 py-2 rounded-lg text-[10px] uppercase tracking-industrial-wide font-mono font-bold transition-all border ${isDark ? 'bg-industrial-orange text-black border-industrial-orange/20 shadow-industrial hover-lift hover:shadow-industrial-lg' : 'bg-blue-500 text-white border-blue-600 hover:bg-blue-600'}`}
+                  >
+                    Confirm Submit
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
         </div>
       )}
     </div>

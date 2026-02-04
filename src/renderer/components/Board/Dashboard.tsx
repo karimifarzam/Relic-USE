@@ -186,7 +186,7 @@ function Dashboard() {
   };
 
   return (
-    <main className={isDark ? 'bg-industrial-black-primary' : 'bg-white'}>
+    <main className={`min-h-0 ${isDark ? 'bg-industrial-black-primary' : 'bg-white'}`}>
       <BoardHeader />
 
       {/* Progress Overlay */}

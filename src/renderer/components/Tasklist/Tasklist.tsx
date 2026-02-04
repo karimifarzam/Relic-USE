@@ -126,9 +126,14 @@ function TaskList() {
   };
 
   return (
-    <main className={`min-h-screen ${isDark ? 'bg-industrial-black-primary' : 'bg-white'}`}>
-      <div className="flex-1 py-6">
-        <h1 className={`text-2xl font-mono font-light tracking-tight mb-6 ${isDark ? 'text-white' : 'text-gray-900'}`}>TASK SELECTION</h1>
+    <main className={`min-h-0 ${isDark ? 'bg-industrial-black-primary' : 'bg-white'}`}>
+      <div className="py-6">
+        {/* Header with Title and Filters */}
+        <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
+          <div className="flex items-center gap-4 sm:self-start sm:pt-1">
+            <h1 className={`text-2xl font-mono font-light tracking-tight ${isDark ? 'text-white' : 'text-gray-900'}`}>TASK SELECTION</h1>
+          </div>
+        </div>
 
         <div className="flex items-start gap-6">
           <div className="flex-1">

@@ -69,7 +69,7 @@ function Sidebar() {
   }, [location.pathname]);
 
   return (
-    <aside className={`w-[200px] pt-[38px] h-screen flex flex-col sticky top-0 overflow-hidden ${isDark ? 'bg-industrial-black-secondary border-r border-industrial-border-subtle' : 'bg-gray-50 border-r border-gray-200'}`}>
+    <aside className={`w-[200px] app-titlebar-pad h-full flex flex-col sticky top-0 overflow-hidden ${isDark ? 'bg-industrial-black-secondary border-r border-industrial-border-subtle' : 'bg-gray-50 border-r border-gray-200'}`}>
       {/* Logo */}
       <div className="flex items-center px-4 mb-12 gap-2 mt-4 ml-6">
         <img src={logo} className="h-8 w-auto object-contain" alt="Logo" />

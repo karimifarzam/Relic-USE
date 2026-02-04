@@ -107,7 +107,7 @@ interface EarningsTabProps {
         </div>
 
         {/* Chart Section */}
-        <div className={`mt-6 rounded-lg p-6 shadow-industrial ${isDark ? 'border border-industrial-border bg-industrial-black-secondary' : 'border border-gray-200 bg-white'}`}>
+        <div className={`mt-5 rounded-lg p-5 shadow-industrial ${isDark ? 'border border-industrial-border bg-industrial-black-secondary' : 'border border-gray-200 bg-white'}`}>
           <div className="flex items-center mb-6">
             <div className="flex items-center gap-3">
               <BarChart2 className={`w-4 h-4 ${isDark ? 'text-industrial-white-tertiary' : 'text-gray-500'}`} strokeWidth={1.5} />
@@ -141,7 +141,7 @@ interface EarningsTabProps {
                 colors={['blue', 'orange']}
                 valueFormatter={(number) => `${number}`}
                 yAxisWidth={48}
-                className="h-72"
+                className="h-[380px]"
               />
             </div>
           </div>

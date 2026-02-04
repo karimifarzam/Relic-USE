@@ -22,16 +22,42 @@ import { AuthProvider } from './contexts/AuthContext';
 export const Layout = ({ children }: { children?: React.ReactNode }) => {
   const { isDark } = useTheme();
 
+  useEffect(() => {
+    window.electron.ipcRenderer.invoke('ui:set-scaling-enabled', true);
+    return () => {
+      window.electron.ipcRenderer.invoke('ui:set-scaling-enabled', false);
+    };
+  }, []);
+
+  useEffect(() => {
+    const baseWidth = 1512;
+    const baseHeight = 982;
+
+    const updateScale = () => {
+      const scale = Math.min(
+        window.innerWidth / baseWidth,
+        window.innerHeight / baseHeight,
+      );
+      document.documentElement.style.setProperty('--app-scale', String(scale));
+    };
+
+    updateScale();
+    window.addEventListener('resize', updateScale);
+    return () => window.removeEventListener('resize', updateScale);
+  }, []);
+
   return (
     <>
       <header className={`titlebar ${isDark ? 'bg-black border-b border-[#1a1a1a]' : 'titlebar-light bg-white border-b border-gray-200'}`}></header>
-      <div className={`flex relative h-screen overflow-hidden ${isDark ? 'bg-industrial-black-primary' : 'bg-white'}`}>
-        <Sidebar />
-        <main className="flex-1 pt-[38px] px-8 overflow-auto hide-scrollbar show-scrollbar-on-hover">
-          <div className="max-w-[1400px] mx-auto pb-8">
-            {children || <Outlet />}
-          </div>
-        </main>
+      <div className={`relative h-screen overflow-hidden ${isDark ? 'bg-industrial-black-primary' : 'bg-white'}`}>
+        <div className="app-scale-root">
+          <Sidebar />
+          <main className="flex-1 min-h-0 app-titlebar-pad px-8 overflow-auto hide-scrollbar show-scrollbar-on-hover">
+            <div className="w-full pb-8">
+              {children || <Outlet />}
+            </div>
+          </main>
+        </div>
       </div>
     </>
   );

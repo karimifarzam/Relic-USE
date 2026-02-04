@@ -1032,8 +1032,8 @@ function Editor() {
       setPendingDeletions([]);
       setHasUnsavedChanges(false);
       setOriginalScreenshots(screenshots);
-      // After persisting deletions, we can no longer undo them.
-      setUndoStack((prev) => prev.filter((a) => a.type === 'commentDeletion'));
+      // After persisting changes, reset undo history so it won't go past this save point.
+      setUndoStack([]);
 
       // Show success message
       window.electron?.ipcRenderer?.sendMessage?.('show-success-notification', {
@@ -1276,6 +1276,7 @@ function Editor() {
         const commentId = Date.now();
         setComments(prev => [...prev, { ...newComment, id: commentId }]);
       }
+      setHasUnsavedChanges(true);
     } catch (error) {
       console.error('Failed to create comment:', error);
       if (window.electron?.ipcRenderer?.sendMessage) {
@@ -1309,6 +1310,7 @@ function Editor() {
           { type: 'commentDeletion', comment: commentToDelete, insertIndex: deleteIndex },
         ]);
       }
+      setHasUnsavedChanges(true);
     } catch (error) {
       console.error('Failed to delete comment:', error);
       if (window.electron?.ipcRenderer?.sendMessage) {
@@ -1340,6 +1342,7 @@ function Editor() {
           ? { ...c, start_time: startTime, end_time: endTime, comment }
           : c
       ));
+      setHasUnsavedChanges(true);
     } catch (error) {
       console.error('Failed to update comment:', error);
       if (window.electron?.ipcRenderer?.sendMessage) {
@@ -1448,13 +1451,13 @@ function Editor() {
                 <button
                   type="button"
                   onClick={() => void handleSave()}
-                  disabled={pendingDeletions.length === 0 || !currentSessionId}
+                  disabled={!hasUnsavedChanges || !currentSessionId}
                   className={`px-4 py-2 text-[10px] uppercase tracking-industrial-wide font-mono font-bold rounded-lg hover-lift transition-all shadow-industrial-sm disabled:opacity-50 disabled:cursor-not-allowed ${
                     isDark
                       ? 'text-black bg-industrial-orange hover:bg-industrial-orange/90 border border-industrial-orange/20'
                       : 'text-white bg-blue-500 hover:bg-blue-600 border border-blue-600'
                   }`}
-                  title={pendingDeletions.length > 0 ? 'Save pending deletions' : 'No pending deletions'}
+                  title={hasUnsavedChanges ? 'Save pending changes' : 'No pending changes'}
                 >
                   <Save className="w-3.5 h-3.5 inline mr-1.5" strokeWidth={1.5} />
                   Save Changes

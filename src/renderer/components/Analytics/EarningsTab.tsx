@@ -1,11 +1,9 @@
 // EarningsTab.tsx
-import { Text } from '@tremor/react';
+import { Text, BarChart } from '@tremor/react';
 import { BarChart2, Users, Wallet, Copy, Check } from 'lucide-react';
 import { useTheme } from '../../contexts/ThemeContext';
 import { useAuth } from '../../contexts/AuthContext';
 import { useState } from 'react';
-import ZoomablePointsChart from './ZoomablePointsChart';
-
 
 interface Stat {
     title: string;

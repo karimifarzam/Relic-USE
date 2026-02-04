@@ -1,5 +1,6 @@
 import { useState, useEffect } from 'react';
 import { useNavigate, Link } from 'react-router-dom';
+import { ArrowLeft } from 'lucide-react';
 import { useAuth } from '../../contexts/AuthContext';
 import { useTheme } from '../../contexts/ThemeContext';
 
@@ -114,6 +115,21 @@ export default function SignUp() {
 
       {/* Main container */}
       <div className={`w-full max-w-md mx-4 relative z-10 transition-all duration-1000 ${mounted ? 'opacity-100 translate-y-0' : 'opacity-0 translate-y-4'}`}>
+        <div className={`mb-4 ${mounted ? 'opacity-100' : 'opacity-0'} transition-opacity duration-500 delay-200`}>
+          <Link
+            to="/sign-in"
+            className={`inline-flex items-center gap-2 px-3 py-1.5 rounded border text-[9px] uppercase tracking-[0.25em] font-mono font-bold transition-all hover-lift ${
+              isDark
+                ? 'bg-industrial-black-tertiary/70 border-industrial-border text-industrial-white-secondary hover:text-white hover:border-industrial-orange'
+                : 'bg-white border-gray-300 text-gray-600 hover:text-gray-900 hover:border-blue-500'
+            }`}
+            aria-label="Back to login"
+          >
+            <ArrowLeft className={`w-3.5 h-3.5 ${isDark ? 'text-industrial-orange' : 'text-blue-600'}`} strokeWidth={2} />
+            [ BACK TO LOGIN ]
+          </Link>
+        </div>
+
         {/* Terminal header */}
         <div className={`mb-8 font-mono ${mounted ? 'opacity-100' : 'opacity-0'} transition-opacity duration-500 delay-300`}>
           <div className={`text-xs uppercase tracking-[0.3em] mb-2 ${isDark ? 'text-industrial-orange' : 'text-blue-600'}`}>

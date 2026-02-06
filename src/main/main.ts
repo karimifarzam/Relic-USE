@@ -123,6 +123,7 @@ let mainWindow: BrowserWindow | null = null;
 let trayWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let creatingMainWindow: Promise<BrowserWindow> | null = null;
+let activeTaskContextId: number | null = null;
 
 const DEFAULT_WINDOW_WIDTH_RATIO = 0.85;
 const DEFAULT_WINDOW_HEIGHT_RATIO = 0.88;
@@ -932,10 +933,29 @@ function registerIpcHandlers() {
     'create-session',
     async (event, sessionType: 'passive' | 'tasked', taskId?: number) => {
       try {
+        let resolvedTaskId =
+          typeof taskId === 'number' ? taskId : null;
+        let resolvedSessionType = sessionType;
+
+        // Recover task context when tray startup races cause a missed open-task event.
+        if (
+          resolvedTaskId === null &&
+          resolvedSessionType === 'passive' &&
+          activeTaskContextId !== null
+        ) {
+          resolvedTaskId = activeTaskContextId;
+          resolvedSessionType = 'tasked';
+        }
+
         const sessionId = await dbHelpers.createSession(
-          sessionType,
-          taskId ?? null,
+          resolvedSessionType,
+          resolvedTaskId,
         );
+
+        if (resolvedSessionType === 'passive') {
+          activeTaskContextId = null;
+        }
+
         return sessionId;
       } catch (error) {
         console.error('Failed to create session:', error);
@@ -1038,22 +1058,60 @@ function registerIpcHandlers() {
     return dbHelpers.getTaskById(taskId);
   });
 
+  ipcMain.handle('get-active-task-id', () => {
+    return activeTaskContextId;
+  });
+
+  ipcMain.handle('clear-active-task-id', () => {
+    activeTaskContextId = null;
+    return true;
+  });
+
   ipcMain.handle('start-task', (event, taskId: number) => {
     try {
+      activeTaskContextId = taskId;
+      ensureTray();
+
+      const applyTaskMode = (win: BrowserWindow) => {
+        if (!isWindowAlive(win) || !tray) return;
+
+        let trayBounds;
+        let windowBounds;
+        try {
+          trayBounds = tray.getBounds();
+          windowBounds = win.getBounds();
+        } catch (error) {
+          return;
+        }
+
+        const yPosition =
+          process.platform === 'darwin'
+            ? trayBounds.y
+            : trayBounds.y - windowBounds.height;
+
+        const xPosition = Math.round(
+          trayBounds.x - windowBounds.width / 2 + trayBounds.width / 2,
+        );
+
+        try {
+          win.setPosition(xPosition, yPosition);
+        } catch (error) {
+          return;
+        }
+
+        sendToWindow(win, 'open-task', taskId);
+        focusWindow(win);
+      };
+
       if (isWindowAlive(trayWindow)) {
-        sendToWindow(trayWindow, 'open-task', taskId);
-        focusWindow(trayWindow);
+        applyTaskMode(trayWindow);
         return;
       }
 
       const win = createTrayWindow();
       const winWebContents = getSafeWebContents(win);
       if (!winWebContents) return;
-      winWebContents.once('did-finish-load', () => {
-        if (!isWindowAlive(win)) return;
-        sendToWindow(win, 'open-task', taskId);
-        focusWindow(win);
-      });
+      winWebContents.once('did-finish-load', () => applyTaskMode(win));
     } catch (error) {
       console.error('Failed to start task:', error);
       throw error;
@@ -1062,6 +1120,7 @@ function registerIpcHandlers() {
 
   ipcMain.handle('start-passive-mode', () => {
     try {
+      activeTaskContextId = null;
       ensureTray();
       if (!tray) return;
 
@@ -1112,6 +1171,9 @@ function registerIpcHandlers() {
 
   ipcMain.handle('open-tracker', (event, mode: 'passive' | 'tasks') => {
     try {
+      if (mode === 'passive') {
+        activeTaskContextId = null;
+      }
       const applyTrackerMode = (win: BrowserWindow) => {
         if (!isWindowAlive(win)) return;
         const display = screen.getPrimaryDisplay();

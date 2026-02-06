@@ -29,19 +29,9 @@ function RecordingCard({
 
   const isSubmitted = approvalState !== 'draft';
 
-  const handleDelete = async (e: React.MouseEvent) => {
+  const handleDelete = (e: React.MouseEvent) => {
     e.stopPropagation(); // Prevent navigation when clicking delete
-    const confirmed = await window.electron.ipcRenderer.invoke(
-      'show-delete-confirmation',
-      {
-        title: 'Delete Recording',
-        message: 'Are you sure you want to delete this recording?',
-      },
-    );
-
-    if (confirmed && onDelete) {
-      onDelete();
-    }
+    onDelete?.();
   };
 
   const handleClick = async () => {

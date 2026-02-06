@@ -755,6 +755,7 @@ function Editor() {
   const [commentToEdit, setCommentToEdit] = useState<number | null>(null);
   const [isSubmitting, setIsSubmitting] = useState(false);
   const [isDeletingClip, setIsDeletingClip] = useState(false);
+  const [showDeleteClipConfirm, setShowDeleteClipConfirm] = useState(false);
   const [undoStack, setUndoStack] = useState<UndoAction[]>([]);
   const submitToastRef = useRef<EditorSubmitToastHandle>(null);
   const navigate = useNavigate();
@@ -1119,24 +1120,6 @@ function Editor() {
     try {
       setIsDeletingClip(true);
 
-      let confirmed = false;
-      if (window.electron?.ipcRenderer?.invoke) {
-        confirmed = (await window.electron.ipcRenderer.invoke(
-          'show-delete-confirmation',
-          {
-            title: 'Delete Clip',
-            message:
-              'This will permanently delete this clip and all associated recordings. Continue?',
-          },
-        )) as boolean;
-      } else {
-        confirmed = window.confirm(
-          'This will permanently delete this clip and all associated recordings. Continue?',
-        );
-      }
-
-      if (!confirmed) return;
-
       if (window.electron?.ipcRenderer?.invoke) {
         await window.electron.ipcRenderer.invoke('delete-session', currentSessionId);
       }
@@ -1166,6 +1149,11 @@ function Editor() {
     } finally {
       setIsDeletingClip(false);
     }
+  };
+
+  const handleRequestDeleteClip = () => {
+    if (!currentSessionId || isDeletingClip) return;
+    setShowDeleteClipConfirm(true);
   };
 
   const handleSubmit = async () => {
@@ -1390,7 +1378,7 @@ function Editor() {
             </button>
             <button
               type="button"
-              onClick={handleDeleteClip}
+              onClick={handleRequestDeleteClip}
               disabled={!currentSessionId || isDeletingClip}
               className={`px-4 py-2 rounded-lg text-[10px] uppercase tracking-industrial-wide font-mono font-bold transition-all hover-lift disabled:opacity-50 disabled:cursor-not-allowed hover:text-industrial-red ${
                 isDark
@@ -1416,6 +1404,85 @@ function Editor() {
             </button>
           </div>
         </div>
+
+        {showDeleteClipConfirm ? (
+          <div
+            className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 backdrop-blur-sm p-4"
+            onClick={() => {
+              if (!isDeletingClip) {
+                setShowDeleteClipConfirm(false);
+              }
+            }}
+          >
+            <div
+              className={`w-full max-w-md rounded-lg border shadow-industrial-lg ${
+                isDark
+                  ? 'bg-industrial-black-secondary border-industrial-border'
+                  : 'bg-white border-gray-300'
+              }`}
+              onClick={(e) => e.stopPropagation()}
+            >
+              <div
+                className={`px-5 py-4 border-b ${
+                  isDark ? 'border-industrial-border-subtle' : 'border-gray-200'
+                }`}
+              >
+                <h3
+                  className={`text-sm uppercase tracking-industrial-wide font-mono font-bold ${
+                    isDark ? 'text-white' : 'text-gray-900'
+                  }`}
+                >
+                  Delete Clip
+                </h3>
+              </div>
+              <div className="px-5 py-4">
+                <p
+                  className={`text-xs font-mono leading-relaxed ${
+                    isDark
+                      ? 'text-industrial-white-secondary'
+                      : 'text-gray-700'
+                  }`}
+                >
+                  This will permanently delete this clip and all associated recordings.
+                  Continue?
+                </p>
+              </div>
+              <div
+                className={`px-5 py-4 border-t flex items-center justify-end gap-2 ${
+                  isDark ? 'border-industrial-border-subtle' : 'border-gray-200'
+                }`}
+              >
+                <button
+                  type="button"
+                  onClick={() => setShowDeleteClipConfirm(false)}
+                  disabled={isDeletingClip}
+                  className={`px-3 py-2 rounded-lg text-[10px] uppercase tracking-industrial-wide font-mono font-bold transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
+                    isDark
+                      ? 'bg-industrial-black-tertiary border border-industrial-border text-industrial-white-secondary hover:text-white'
+                      : 'bg-gray-100 border border-gray-300 text-gray-700 hover:text-gray-900'
+                  }`}
+                >
+                  Cancel
+                </button>
+                <button
+                  type="button"
+                  onClick={() => {
+                    setShowDeleteClipConfirm(false);
+                    void handleDeleteClip();
+                  }}
+                  disabled={isDeletingClip}
+                  className={`px-3 py-2 rounded-lg text-[10px] uppercase tracking-industrial-wide font-mono font-bold transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
+                    isDark
+                      ? 'bg-industrial-red/90 border border-industrial-red/50 text-white hover:bg-industrial-red'
+                      : 'bg-red-600 border border-red-700 text-white hover:bg-red-700'
+                  }`}
+                >
+                  {isDeletingClip ? 'Deleting...' : 'Delete Forever'}
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
 
         <div className="flex gap-6 mb-5">
           {/* Screenshot Editor Section */}

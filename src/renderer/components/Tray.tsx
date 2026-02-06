@@ -70,6 +70,7 @@ function Tray({ onStartEarning }: TrayProps): JSX.Element {
   const [storage, setStorage] = useState(0);
   const [currentSessionId, setCurrentSessionId] = useState<number | null>(null);
   const [selectedTask, setSelectedTask] = useState<Task | null>(null);
+  const [selectedTaskId, setSelectedTaskId] = useState<number | null>(null);
   const captureInterval = useRef<ReturnType<typeof setInterval> | null>(null);
   const lastCapturedWindowId = useRef<string | null>(null);
   const [lastCapture, setLastCapture] = useState<{
@@ -81,6 +82,17 @@ function Tray({ onStartEarning }: TrayProps): JSX.Element {
     id: string;
     type: 'window' | 'screen';
   } | null>(null);
+  const hasTaskContext = selectedTaskId !== null;
+
+  const clearTaskContext = useCallback(() => {
+    setSelectedTask(null);
+    setSelectedTaskId(null);
+    void window.electron.ipcRenderer
+      .invoke('clear-active-task-id')
+      .catch((error) => {
+        console.error('Failed to clear active task context:', error);
+      });
+  }, []);
 
   useEffect(() => {
     // Tray window should keep a fixed 1:1 UI scale.
@@ -180,10 +192,40 @@ function Tray({ onStartEarning }: TrayProps): JSX.Element {
   }, [isRecording, currentSessionId, isPaused]);
 
   useEffect(() => {
+    const restoreTaskContext = async () => {
+      try {
+        const activeTaskId = (await window.electron.ipcRenderer.invoke(
+          'get-active-task-id',
+        )) as number | null;
+
+        if (typeof activeTaskId !== 'number') return;
+
+        setSelectedTaskId(activeTaskId);
+        setSelectedTask(null);
+        setActiveTab('tasks');
+
+        const task = (await window.electron.ipcRenderer.invoke(
+          'get-task',
+          activeTaskId,
+        )) as Task | null;
+        if (task) {
+          setSelectedTask(task);
+        }
+      } catch (error) {
+        console.error('Failed to restore active task context:', error);
+      }
+    };
+
+    void restoreTaskContext();
+  }, []);
+
+  useEffect(() => {
     const taskListener = window.electron.ipcRenderer.on(
       'open-task',
       async (args) => {
         const taskId = args as number;
+        setSelectedTaskId(taskId);
+        setSelectedTask(null);
         setActiveTab('tasks');
         try {
           const task = await window.electron.ipcRenderer.invoke(
@@ -210,7 +252,7 @@ function Tray({ onStartEarning }: TrayProps): JSX.Element {
       (mode) => {
         setActiveTab(mode as 'passive' | 'tasks');
         if (mode === 'passive') {
-          setSelectedTask(null);
+          clearTaskContext();
         }
 
         // When switching to passive mode, set default display but don't select a window
@@ -226,7 +268,7 @@ function Tray({ onStartEarning }: TrayProps): JSX.Element {
     return () => {
       modeListener?.();
     };
-  }, [displays]);
+  }, [displays, clearTaskContext]);
 
   useEffect(() => {
     // Add listeners for pause/resume events
@@ -298,7 +340,7 @@ function Tray({ onStartEarning }: TrayProps): JSX.Element {
             window_id: sourceId,
             thumbnail: capture.thumbnail,
             screenshot: capture.screenshot,
-            type: selectedTask ? 'tasked' : 'passive',
+            type: hasTaskContext ? 'tasked' : 'passive',
           });
           console.log(`[TRAY] Saved recording ID: ${saveResult}`);
         } else {
@@ -308,7 +350,7 @@ function Tray({ onStartEarning }: TrayProps): JSX.Element {
         console.error('[TRAY] Capture error:', error);
       }
     },
-    [recordingSource, selectedTask],
+    [recordingSource, hasTaskContext],
   );
 
   const startCaptureInterval = useCallback(
@@ -435,11 +477,14 @@ function Tray({ onStartEarning }: TrayProps): JSX.Element {
 
       console.log('[TRAY] Starting recording with source:', sourceToUse);
 
+      const sessionType = hasTaskContext ? 'tasked' : 'passive';
+      const taskId = hasTaskContext ? selectedTaskId : undefined;
+
       // Create session
       const sessionId = await window.electron.ipcRenderer.invoke(
         'create-session',
-        selectedTask ? 'tasked' : 'passive',
-        selectedTask?.id,
+        sessionType,
+        taskId,
       ) as number | null;
 
       if (!sessionId) {
@@ -522,15 +567,15 @@ function Tray({ onStartEarning }: TrayProps): JSX.Element {
       <div className="flex justify-between items-center gap-3 mb-4">
         {/* Mode Indicator */}
         <div className={`px-2 py-1 rounded-md border text-[9px] uppercase tracking-industrial-wide font-mono font-bold ${
-          selectedTask
-            ? isDark
-              ? 'bg-industrial-orange/10 border-industrial-orange/30 text-industrial-orange'
-              : 'bg-orange-50 border-orange-200 text-orange-600'
+            hasTaskContext
+              ? isDark
+                ? 'bg-industrial-orange/10 border-industrial-orange/30 text-industrial-orange'
+                : 'bg-orange-50 border-orange-200 text-orange-600'
             : isDark
               ? 'bg-industrial-blue/10 border-industrial-blue/30 text-industrial-blue'
               : 'bg-blue-50 border-blue-200 text-blue-600'
         }`}>
-          {selectedTask ? 'Task' : 'Passive'}
+          {hasTaskContext ? 'Task' : 'Passive'}
         </div>
 
         <div className="flex items-center gap-3">
@@ -768,13 +813,17 @@ function Tray({ onStartEarning }: TrayProps): JSX.Element {
               <button
                 type="button"
                 onClick={() => {
-                  setSelectedTask(null);
+                  clearTaskContext();
                   setActiveTab('passive');
                 }}
                 className={`w-full px-4 py-2 rounded-lg text-[10px] uppercase tracking-industrial-wide font-mono font-bold transition-all border ${isDark ? 'bg-industrial-black-tertiary text-industrial-white-secondary border-industrial-border hover:bg-industrial-black-primary hover:text-white' : 'bg-gray-100 text-gray-700 border-gray-300 hover:bg-gray-200 hover:text-gray-900'}`}
               >
                 Clear Task / Back to Passive
               </button>
+            </div>
+          ) : activeTab === 'tasks' && hasTaskContext ? (
+            <div className={`text-center py-8 text-[10px] uppercase tracking-industrial font-mono ${isDark ? 'text-industrial-white-tertiary' : 'text-gray-500'}`}>
+              Loading task...
             </div>
           ) : (
             <div className={`text-center py-8 text-[10px] uppercase tracking-industrial font-mono ${isDark ? 'text-industrial-white-tertiary' : 'text-gray-500'}`}>

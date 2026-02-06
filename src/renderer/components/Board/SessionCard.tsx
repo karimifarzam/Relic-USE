@@ -43,6 +43,8 @@ function SessionCard({
   const [canSubmit, setCanSubmit] = useState(false);
   const [taskTitle, setTaskTitle] = useState<string | null>(null);
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
+  const [showDeleteClipConfirm, setShowDeleteClipConfirm] = useState(false);
+  const [isDeletingClip, setIsDeletingClip] = useState(false);
   const [comments, setComments] = useState<number>(0);
   const { isDark } = useTheme();
   const persistedDurationVersions = useRef<Set<string>>(new Set());
@@ -170,19 +172,27 @@ function SessionCard({
   }, [session.id]);
 
   const handleDeleteRecording = async () => {
-    if (session.id) {
-      try {
-        await window.electron.ipcRenderer.invoke('delete-session', session.id);
-        // Clear local state immediately to prevent stale UI
-        setRecordings([]);
-        // Call the callback to refresh the sessions list
-        if (onSessionDeleted) {
-          onSessionDeleted();
-        }
-      } catch (error) {
-        console.error('Failed to delete recording:', error);
+    if (!session.id || isDeletingClip) return;
+
+    try {
+      setIsDeletingClip(true);
+      await window.electron.ipcRenderer.invoke('delete-session', session.id);
+      // Clear local state immediately to prevent stale UI
+      setRecordings([]);
+      // Call the callback to refresh the sessions list
+      if (onSessionDeleted) {
+        onSessionDeleted();
       }
+    } catch (error) {
+      console.error('Failed to delete recording:', error);
+    } finally {
+      setIsDeletingClip(false);
     }
+  };
+
+  const handleRequestDeleteRecording = () => {
+    if (!session.id || isDeletingClip) return;
+    setShowDeleteClipConfirm(true);
   };
 
   const handleConfirmSubmit = () => {
@@ -208,7 +218,7 @@ function SessionCard({
             type={recordings[recordings.length - 1].type}
             thumbnail={recordings[recordings.length - 1].thumbnail}
             sessionId={session.id}
-            onDelete={handleDeleteRecording}
+            onDelete={handleRequestDeleteRecording}
             approvalState={session.approval_state}
             footerAction={
               canSubmit && onSubmit ? (
@@ -296,6 +306,85 @@ function SessionCard({
               </div>
             </div>
           )}
+
+          {showDeleteClipConfirm ? (
+            <div
+              className="fixed inset-0 z-50 flex items-center justify-center bg-black/65 backdrop-blur-sm p-4"
+              onClick={() => {
+                if (!isDeletingClip) {
+                  setShowDeleteClipConfirm(false);
+                }
+              }}
+            >
+              <div
+                className={`w-full max-w-md rounded-lg border shadow-industrial-lg ${
+                  isDark
+                    ? 'bg-industrial-black-secondary border-industrial-border'
+                    : 'bg-white border-gray-300'
+                }`}
+                onClick={(e) => e.stopPropagation()}
+              >
+                <div
+                  className={`px-5 py-4 border-b ${
+                    isDark ? 'border-industrial-border-subtle' : 'border-gray-200'
+                  }`}
+                >
+                  <h3
+                    className={`text-sm uppercase tracking-industrial-wide font-mono font-bold ${
+                      isDark ? 'text-white' : 'text-gray-900'
+                    }`}
+                  >
+                    Delete Clip
+                  </h3>
+                </div>
+                <div className="px-5 py-4">
+                  <p
+                    className={`text-xs font-mono leading-relaxed ${
+                      isDark
+                        ? 'text-industrial-white-secondary'
+                        : 'text-gray-700'
+                    }`}
+                  >
+                    This will permanently delete this clip and all associated recordings.
+                    Continue?
+                  </p>
+                </div>
+                <div
+                  className={`px-5 py-4 border-t flex items-center justify-end gap-2 ${
+                    isDark ? 'border-industrial-border-subtle' : 'border-gray-200'
+                  }`}
+                >
+                  <button
+                    type="button"
+                    onClick={() => setShowDeleteClipConfirm(false)}
+                    disabled={isDeletingClip}
+                    className={`px-3 py-2 rounded-lg text-[10px] uppercase tracking-industrial-wide font-mono font-bold transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
+                      isDark
+                        ? 'bg-industrial-black-tertiary border border-industrial-border text-industrial-white-secondary hover:text-white'
+                        : 'bg-gray-100 border border-gray-300 text-gray-700 hover:text-gray-900'
+                    }`}
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      setShowDeleteClipConfirm(false);
+                      void handleDeleteRecording();
+                    }}
+                    disabled={isDeletingClip}
+                    className={`px-3 py-2 rounded-lg text-[10px] uppercase tracking-industrial-wide font-mono font-bold transition-all disabled:opacity-50 disabled:cursor-not-allowed ${
+                      isDark
+                        ? 'bg-industrial-red/90 border border-industrial-red/50 text-white hover:bg-industrial-red'
+                        : 'bg-red-600 border border-red-700 text-white hover:bg-red-700'
+                    }`}
+                  >
+                    {isDeletingClip ? 'Deleting...' : 'Delete Forever'}
+                  </button>
+                </div>
+              </div>
+            </div>
+          ) : null}
         </div>
       )}
     </div>
@@ -303,3 +392,10 @@ function SessionCard({
 }
 
 export default SessionCard;
+
+if (process.env.NODE_ENV === 'development' && (module as any).hot) {
+  (module as any).hot.accept();
+  (module as any).hot.dispose(() => {
+    window.location.reload();
+  });
+}

@@ -30,6 +30,8 @@ const VALID_CHANNELS = [
   'get-current-duration',
   'get-tasks',
   'get-task',
+  'get-active-task-id',
+  'clear-active-task-id',
   'start-task',
   'start-passive-mode',
   'open-task',

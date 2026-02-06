@@ -153,6 +153,7 @@ function StatusColumn({
             {sessions.map((session) => {
               const isActive = activeSessionId === session.id;
               const isSubmitting = submittingSessionId === session.id;
+              const isPassive = session.session_status === 'passive';
               const canSubmit =
                 title === 'Draft' &&
                 session.approval_state === 'draft' &&
@@ -196,8 +197,12 @@ function StatusColumn({
                       <span
                         className={`text-[8px] uppercase tracking-industrial-wide font-mono font-bold px-1.5 py-0.5 rounded border ${
                           isDark
-                            ? 'border-industrial-border text-industrial-white-secondary'
-                            : 'border-gray-300 text-gray-600'
+                            ? isPassive
+                              ? 'bg-black/90 border-industrial-border-subtle text-white'
+                              : 'bg-industrial-orange/10 border-industrial-orange/30 text-industrial-orange'
+                            : isPassive
+                              ? 'bg-gray-100 border-gray-300 text-gray-700'
+                              : 'bg-blue-50 border-blue-200 text-blue-700'
                         }`}
                       >
                         {session.session_status}

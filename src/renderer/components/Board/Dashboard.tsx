@@ -2,6 +2,7 @@ import { useEffect, useState, useMemo, useCallback } from 'react';
 import BoardHeader from './BoardHeader';
 import StatusColumn from './StatusColumn';
 import { useTheme } from '../../contexts/ThemeContext';
+import type { BoardViewMode } from './BoardHeader';
 
 interface Session {
   id: number;
@@ -21,6 +22,7 @@ interface SubmissionProgress {
 
 function Dashboard() {
   const [sessions, setSessions] = useState<Session[]>([]);
+  const [viewMode, setViewMode] = useState<BoardViewMode>('preview');
   const [activeSessionId, setActiveSessionId] = useState<number | null>(null);
   const [submittingSessionId, setSubmittingSessionId] = useState<number | null>(null);
   const [submissionProgress, setSubmissionProgress] = useState<SubmissionProgress | null>(null);
@@ -163,7 +165,7 @@ function Dashboard() {
   return (
     <main className={`min-h-0 ${isDark ? 'bg-industrial-black-primary' : 'bg-white'}`}>
       <div className="py-6">
-        <BoardHeader />
+        <BoardHeader viewMode={viewMode} onViewModeChange={setViewMode} />
         {/* Progress Overlay */}
       {submittingSessionId && submissionProgress && (
         <div className="fixed top-20 right-6 z-50">
@@ -214,6 +216,7 @@ function Dashboard() {
           <StatusColumn
             title="Draft"
             sessions={groupedSessions.draft}
+            viewMode={viewMode}
             onSessionClick={handleSessionClick}
             onSessionSubmit={handleSessionSubmit}
             onSessionDeleted={fetchSessions}
@@ -223,6 +226,7 @@ function Dashboard() {
           <StatusColumn
             title="Submitted"
             sessions={groupedSessions.submitted}
+            viewMode={viewMode}
             onSessionClick={handleSessionClick}
             onSessionDeleted={fetchSessions}
             activeSessionId={activeSessionId}
@@ -230,6 +234,7 @@ function Dashboard() {
           <StatusColumn
             title="Rejected"
             sessions={groupedSessions.rejected}
+            viewMode={viewMode}
             onSessionClick={handleSessionClick}
             onSessionDeleted={fetchSessions}
             activeSessionId={activeSessionId}
@@ -237,6 +242,7 @@ function Dashboard() {
           <StatusColumn
             title="Approved"
             sessions={groupedSessions.approved}
+            viewMode={viewMode}
             onSessionClick={handleSessionClick}
             onSessionDeleted={fetchSessions}
             activeSessionId={activeSessionId}

@@ -135,7 +135,7 @@ function Sidebar() {
             data-testid="logo-hover-glow"
             aria-hidden="true"
             className={`pointer-events-none absolute left-1/2 top-full mt-1.5 h-5 w-24 rounded-full blur-xl opacity-0 transition-all duration-200 group-hover:opacity-100 ${
-              isDark ? 'bg-industrial-orange/20' : 'bg-blue-400/24'
+              isDark ? 'bg-industrial-orange/20' : 'bg-blue-400/40'
             }`}
             style={{
               transform:
@@ -146,7 +146,7 @@ function Sidebar() {
             data-testid="logo-hover-cursor-glow"
             aria-hidden="true"
             className={`pointer-events-none absolute left-1/2 top-1/2 h-4 w-10 rounded-full blur-md transition-all duration-150 ${
-              isDark ? 'bg-industrial-orange/70' : 'bg-blue-400/75'
+              isDark ? 'bg-industrial-orange/70' : 'bg-blue-400/90'
             }`}
             style={{
               opacity: 'var(--logo-cursor-glow-opacity, 0)',

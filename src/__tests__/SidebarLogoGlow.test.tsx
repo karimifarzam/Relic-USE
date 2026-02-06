@@ -55,8 +55,8 @@ describe('Sidebar logo hover glow', () => {
     const glow = screen.getByTestId('logo-hover-glow');
     const cursorGlow = screen.getByTestId('logo-hover-cursor-glow');
 
-    expect(glow).toHaveClass('bg-blue-400/24');
-    expect(cursorGlow).toHaveClass('bg-blue-400/75');
+    expect(glow).toHaveClass('bg-blue-400/40');
+    expect(cursorGlow).toHaveClass('bg-blue-400/90');
   });
 
   it('moves glow slightly with mouse position and resets on leave', () => {

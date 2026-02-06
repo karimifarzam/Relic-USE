@@ -1,5 +1,4 @@
 import React, { useCallback, useEffect, useImperativeHandle, useRef, useState } from 'react';
-import { Check, X, AlertTriangle, Info, Zap } from 'lucide-react';
 
 type ToastVariant = 'info' | 'success' | 'warning' | 'error' | 'reward';
 
@@ -17,21 +16,6 @@ const EditorSubmitToast = React.forwardRef<EditorSubmitToastHandle, { isDark: bo
   function EditorSubmitToast({ isDark }, ref) {
     const [toast, setToast] = useState<ToastPayload | null>(null);
     const timeoutRef = useRef<number | null>(null);
-
-    const getToastIcon = (type: ToastVariant) => {
-      switch (type) {
-        case 'success':
-          return Check;
-        case 'error':
-          return X;
-        case 'warning':
-          return AlertTriangle;
-        case 'reward':
-          return Zap;
-        default:
-          return Info;
-      }
-    };
 
     const getToastColor = (type: ToastVariant): string => {
       switch (type) {
@@ -70,33 +54,34 @@ const EditorSubmitToast = React.forwardRef<EditorSubmitToastHandle, { isDark: bo
 
     if (!toast) return null;
     const type = toast.type ?? 'success';
-    const Icon = getToastIcon(type);
     const color = getToastColor(type);
 
     return (
-      <div className="fixed left-1/2 top-[calc(var(--titlebar-height)+1px)] z-50 w-[360px] max-w-[90vw] -translate-x-1/2">
+      <div className="fixed left-1/2 top-[calc(var(--titlebar-height)+28.5px)] z-40 w-[360px] max-w-[90vw] -translate-x-1/2 pointer-events-none">
         <div
-          className={`border rounded-lg p-2 transition-all hover-lift group relative overflow-hidden ${
-            isDark ? 'bg-industrial-black-secondary border-industrial-border' : 'bg-white border-gray-300'
+          className={`border rounded-lg p-2 relative overflow-hidden ${
+            isDark ? 'bg-industrial-black-secondary border-industrial-border' : 'bg-gray-50 border-gray-200'
           }`}
         >
-          <div className="absolute left-0 top-0 bottom-0 w-1 rounded-l" style={{ backgroundColor: color }} />
-          <div className="flex items-start gap-4 ml-3">
-            <div
-              className="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 border"
-              style={{ backgroundColor: `${color}1A`, borderColor: `${color}33` }}
+          <div
+            className="absolute left-0 top-0 bottom-0 w-1"
+            style={{ backgroundColor: color }}
+          />
+          <p
+            className={`ml-3 text-[11px] font-mono leading-snug ${
+              isDark ? 'text-industrial-white-secondary' : 'text-gray-600'
+            }`}
+          >
+            <span
+              className={`font-semibold ${
+                isDark ? 'text-white' : 'text-gray-900'
+              }`}
             >
-              <Icon className="w-5 h-5" strokeWidth={1.5} style={{ color }} />
-            </div>
-            <div className="flex-1 min-w-0">
-              <h3 className={`text-[13px] font-mono font-semibold mb-0.5 ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                {toast.title}
-              </h3>
-              <p className={`text-[11px] font-mono leading-snug ${isDark ? 'text-industrial-white-secondary' : 'text-gray-600'}`}>
-                {toast.message}
-              </p>
-            </div>
-          </div>
+              {toast.title}
+            </span>
+            {toast.title ? ': ' : ''}
+            {toast.message}
+          </p>
         </div>
       </div>
     );

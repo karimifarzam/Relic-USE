@@ -70,6 +70,36 @@ interface Recording {
   label?: string;
 }
 
+interface EditorSessionSummary {
+  id: number;
+  created_at: string;
+}
+
+export const getLatestSessionId = (
+  sessions: EditorSessionSummary[],
+): number | null => {
+  if (!Array.isArray(sessions) || sessions.length === 0) {
+    return null;
+  }
+
+  const sorted = [...sessions].sort((a, b) => {
+    const aTime = Date.parse(a.created_at ?? '');
+    const bTime = Date.parse(b.created_at ?? '');
+
+    if (Number.isFinite(aTime) && Number.isFinite(bTime) && aTime !== bTime) {
+      return bTime - aTime;
+    }
+
+    return b.id - a.id;
+  });
+
+  return sorted[0]?.id ?? null;
+};
+
+export const getLatestRecordingIndex = (recordings: Recording[]): number => {
+  return recordings.length > 0 ? recordings.length - 1 : 0;
+};
+
 const toScreenshotTimelineItems = (recordings: Recording[]): Screenshot[] => {
   return buildTimestampTimeline(recordings).map(({ item: recording, time }, index) => ({
     id:
@@ -757,9 +787,62 @@ function Editor() {
   const [isDeletingClip, setIsDeletingClip] = useState(false);
   const [showDeleteClipConfirm, setShowDeleteClipConfirm] = useState(false);
   const [undoStack, setUndoStack] = useState<UndoAction[]>([]);
+  const [isInitialLoadComplete, setIsInitialLoadComplete] = useState(false);
+  const hasExternalSessionLoadRef = useRef(false);
   const submitToastRef = useRef<EditorSubmitToastHandle>(null);
   const navigate = useNavigate();
   const { isDark } = useTheme();
+
+  const resetEditorToEmptyState = useCallback(() => {
+    setCurrentSessionId(null);
+    setScreenshots([]);
+    setOriginalScreenshots([]);
+    setPendingDeletions([]);
+    setHasUnsavedChanges(false);
+    setComments([]);
+    setSelectedIndices([]);
+    setCurrentIndex(0);
+    setUndoStack([]);
+  }, []);
+
+  const loadSessionIntoEditor = useCallback(
+    async (sessionId: number, recordings: Recording[]) => {
+      if (!recordings || recordings.length === 0) {
+        resetEditorToEmptyState();
+        return false;
+      }
+
+      const convertedScreenshots = toScreenshotTimelineItems(recordings);
+      const latestRecordingIndex = getLatestRecordingIndex(recordings);
+
+      setCurrentSessionId(sessionId);
+      setScreenshots(convertedScreenshots);
+      setOriginalScreenshots(convertedScreenshots);
+      setPendingDeletions([]);
+      setHasUnsavedChanges(false);
+      setSelectedIndices([]);
+      setCurrentIndex(latestRecordingIndex);
+      setUndoStack([]);
+
+      try {
+        const sessionComments = await window.electron?.ipcRenderer?.invoke?.(
+          'get-session-comments',
+          sessionId,
+        ) as TimeRangeComment[];
+        setComments(sessionComments || []);
+      } catch (error) {
+        console.error('Failed to load comments:', error);
+        setComments([]);
+        window.electron?.ipcRenderer?.sendMessage?.('show-error-notification', {
+          title: 'Error',
+          message: 'Failed to load comments',
+        });
+      }
+
+      return true;
+    },
+    [resetEditorToEmptyState],
+  );
 
   const baseMinTimelineZoom = 25;
   const computedMinTimelineZoom =
@@ -801,129 +884,74 @@ function Editor() {
   }, [minTimelineZoom]);
 
   useEffect(() => {
-    // Listen for load-editor events from the main process
+    // Listen for load-editor events from the main process.
     const loadEditorListener = window.electron?.ipcRenderer?.on?.(
       'load-editor',
       async (data: unknown) => {
+        hasExternalSessionLoadRef.current = true;
         const { sessionId, recordings } = data as {
           sessionId: number;
           recordings: Recording[];
         };
 
-        setCurrentSessionId(sessionId);
-        // Convert recordings to a stable, timestamp-based timeline.
-        const convertedScreenshots = toScreenshotTimelineItems(recordings);
-        setScreenshots(convertedScreenshots);
-        setOriginalScreenshots(convertedScreenshots);
-        setPendingDeletions([]);
-        setHasUnsavedChanges(false);
-        setSelectedIndices([]);
-        setUndoStack([]);
-
-        // Load comments
-        try {
-          const sessionComments = await window.electron?.ipcRenderer?.invoke?.(
-            'get-session-comments',
-            sessionId,
-          ) as TimeRangeComment[];
-          setComments(sessionComments || []);
-        } catch (error) {
-          console.error('Failed to load comments:', error);
-          window.electron?.ipcRenderer?.sendMessage?.('show-error-notification', {
-            title: 'Error',
-            message: 'Failed to load comments',
-          });
-        }
+        await loadSessionIntoEditor(sessionId, recordings || []);
+        setIsInitialLoadComplete(true);
       },
     );
 
     return () => {
       loadEditorListener?.();
     };
-  }, []);
+  }, [loadSessionIntoEditor]);
 
-  // Load draft recordings on mount
   useEffect(() => {
-    const loadDraftRecordings = async () => {
-      if (screenshots.length > 0) return; // Already loaded
+    let isDisposed = false;
 
+    const loadLatestSessionRecordings = async () => {
       try {
-        if (window.electron?.ipcRenderer?.invoke) {
-          // Try to get draft recordings
-          const draftSessions = await window.electron.ipcRenderer.invoke('get-sessions') as Array<{
-            id: number;
-            approval_state: 'draft' | 'submitted' | 'approved' | 'rejected';
-            session_status: 'passive' | 'tasked';
-          }>;
-
-          // Find the first draft session
-          const draftSession = draftSessions?.find((session) => session.approval_state === 'draft');
-
-          if (draftSession?.id) {
-            // Load the draft session's recordings
-            const recordings = await window.electron.ipcRenderer.invoke(
-              'get-session-recordings',
-              draftSession.id
-            ) as Recording[];
-
-            if (recordings && recordings.length > 0) {
-              setCurrentSessionId(draftSession.id);
-              const convertedScreenshots = toScreenshotTimelineItems(recordings);
-              setScreenshots(convertedScreenshots);
-              setOriginalScreenshots(convertedScreenshots);
-              setPendingDeletions([]);
-              setHasUnsavedChanges(false);
-              setSelectedIndices([]);
-              setUndoStack([]);
-
-              // Load comments for the draft session
-              try {
-                const sessionComments = await window.electron.ipcRenderer.invoke(
-                  'get-session-comments',
-                  draftSession.id,
-                ) as TimeRangeComment[];
-                setComments(sessionComments || []);
-              } catch (error) {
-                console.error('Failed to load draft comments:', error);
-              }
-              return;
-            }
-          }
+        if (!window.electron?.ipcRenderer?.invoke) {
+          resetEditorToEmptyState();
+          return;
         }
 
-        // If no draft found or in browser, load demo screenshots
-        const demoScreenshots: Screenshot[] = [
-          {
-            id: '1',
-            timestamp: '2023-01-01 10:00:00',
-            imageUrl: 'https://picsum.photos/800/600?random=1',
-            label: 'Home Screen',
-            time: 0,
-          },
-          {
-            id: '2',
-            timestamp: '2023-01-01 10:01:30',
-            imageUrl: 'https://picsum.photos/800/600?random=2',
-            label: 'Settings Menu',
-            time: 1,
-          },
-          {
-            id: '3',
-            timestamp: '2023-01-01 10:03:15',
-            imageUrl: 'https://picsum.photos/800/600?random=3',
-            label: 'User Profile',
-            time: 2,
-          }
-        ];
-        setScreenshots(demoScreenshots);
-        setOriginalScreenshots(demoScreenshots);
+        const sessions = await window.electron.ipcRenderer.invoke(
+          'get-sessions',
+        ) as EditorSessionSummary[];
+
+        if (isDisposed || hasExternalSessionLoadRef.current) return;
+
+        const latestSessionId = getLatestSessionId(sessions || []);
+        if (!latestSessionId) {
+          resetEditorToEmptyState();
+          return;
+        }
+
+        const recordings = await window.electron.ipcRenderer.invoke(
+          'get-session-recordings',
+          latestSessionId,
+        ) as Recording[];
+
+        if (isDisposed || hasExternalSessionLoadRef.current) return;
+
+        await loadSessionIntoEditor(latestSessionId, recordings || []);
       } catch (error) {
-        console.error('Failed to load draft recordings:', error);
+        console.error('Failed to load latest recordings:', error);
+        if (!isDisposed && !hasExternalSessionLoadRef.current) {
+          resetEditorToEmptyState();
+        }
+      } finally {
+        if (!isDisposed && !hasExternalSessionLoadRef.current) {
+          setIsInitialLoadComplete(true);
+        }
       }
     };
 
-    loadDraftRecordings();
-  }, []);
+    void loadLatestSessionRecordings();
+
+    return () => {
+      isDisposed = true;
+    };
+  }, [loadSessionIntoEditor, resetEditorToEmptyState]);
 
   const handleDeleteScreenshots = async (indices: number[]) => {
     if (!currentSessionId) return;
@@ -1352,9 +1380,36 @@ function Editor() {
     }
   };
 
+  const showEmptyEditorNotice =
+    isInitialLoadComplete && screenshots.length === 0;
+
   return (
     <main className={`min-h-0 ${isDark ? 'bg-industrial-black-primary' : 'bg-white'}`}>
       <EditorSubmitToast ref={submitToastRef} isDark={isDark} />
+      {showEmptyEditorNotice ? (
+        <div className="fixed left-1/2 top-[calc(var(--titlebar-height)+28.5px)] z-40 w-[360px] max-w-[90vw] -translate-x-1/2 pointer-events-none">
+          <div
+            className={`border rounded-lg p-2 relative overflow-hidden ${
+              isDark
+                ? 'bg-industrial-black-secondary border-industrial-border'
+                : 'bg-gray-50 border-gray-200'
+            }`}
+          >
+            <div
+              className={`absolute left-0 top-0 bottom-0 w-1 ${
+                isDark ? 'bg-industrial-orange' : 'bg-blue-500'
+              }`}
+            />
+            <p
+              className={`ml-3 text-[11px] font-mono ${
+                isDark ? 'text-industrial-white-secondary' : 'text-gray-600'
+              }`}
+            >
+              (Record a session to edit it here)
+            </p>
+          </div>
+        </div>
+      ) : null}
       <div className="py-6">
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
           <div className="flex items-center gap-4 sm:self-start sm:pt-1">

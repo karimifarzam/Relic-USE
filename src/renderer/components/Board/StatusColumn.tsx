@@ -128,7 +128,7 @@ function StatusColumn({
           <div className="space-y-4 max-h-[700px] overflow-y-auto pr-2 pt-2 hide-scrollbar show-scrollbar-on-hover">
             {sessions.length === 0 ? (
               <p
-                className={`text-[9px] font-mono px-1 ${
+                className={`-mt-3 text-[9px] font-mono px-1 ${
                   isDark
                     ? 'text-industrial-white-tertiary'
                     : 'text-gray-500'
@@ -159,7 +159,7 @@ function StatusColumn({
           <div className="space-y-1 max-h-[700px] overflow-y-auto pr-2 pt-2 hide-scrollbar show-scrollbar-on-hover">
             {sessions.length === 0 ? (
               <p
-                className={`text-[9px] font-mono px-1 ${
+                className={`-mt-3 text-[9px] font-mono px-1 ${
                   isDark
                     ? 'text-industrial-white-tertiary'
                     : 'text-gray-500'

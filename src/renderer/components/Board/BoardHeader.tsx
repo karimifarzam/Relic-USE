@@ -22,7 +22,7 @@ const BoardHeader = ({ viewMode, onViewModeChange }: BoardHeaderProps) => {
             </div>
             <div className="flex gap-2 min-h-[38px] items-center">
                 <div
-                    className={`rounded-lg p-1 border ${
+                    className={`rounded-lg p-1 w-auto border ${
                         isDark
                             ? 'bg-industrial-black-secondary border-industrial-border'
                             : 'bg-gray-100 border-gray-300'
@@ -35,7 +35,7 @@ const BoardHeader = ({ viewMode, onViewModeChange }: BoardHeaderProps) => {
                                 type="button"
                                 onClick={() => onViewModeChange(mode)}
                                 aria-pressed={viewMode === mode}
-                                className={`px-3 py-2 rounded-md text-[10px] uppercase tracking-industrial-wide font-mono font-bold transition-all ${
+                                className={`py-2 px-4 text-[10px] uppercase tracking-industrial-wide font-mono font-bold rounded-md transition-all focus:outline-none active:scale-95 ${
                                     viewMode === mode
                                         ? isDark
                                             ? 'bg-industrial-black-tertiary text-white border border-industrial-border'

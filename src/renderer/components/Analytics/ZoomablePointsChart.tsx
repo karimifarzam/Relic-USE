@@ -75,6 +75,8 @@ export default function ZoomablePointsChart({
   }, [baseSeries]);
 
   const colors = useMemo(() => {
+    const seriesColor = isDark ? '#ff9500' : '#007aff';
+
     return {
       axis: isDark ? '#2a2a2a' : '#e5e7eb',
       grid: isDark ? '#1a1a1a' : '#e5e7eb',
@@ -82,12 +84,11 @@ export default function ZoomablePointsChart({
       tooltipBg: isDark ? '#1a1a1a' : '#111827',
       tooltipBorder: isDark ? '#2a2a2a' : '#111827',
       tooltipText: '#ffffff',
-      selectionStroke: isDark ? '#ffffff' : '#111827',
+      selectionStroke: seriesColor,
       selectionFill: isDark
         ? 'rgba(255, 255, 255, 0.10)'
         : 'rgba(17, 24, 39, 0.08)',
-      // Dark mode: bright/white series. Light mode: dark/ink series so it remains readable on a light bg.
-      series: isDark ? '#ffffff' : '#111827',
+      series: seriesColor,
     } as const;
   }, [isDark]);
 

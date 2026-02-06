@@ -151,7 +151,7 @@ const UsageTab: React.FC<UsageTabProps> = ({
               data={timelineData}
               index="date"
               categories={['usage']}
-              colors={['blue']}
+              colors={[isDark ? 'orange' : 'blue']}
               valueFormatter={(number) => `${number}h`}
               className="h-64"
               curveType="natural"

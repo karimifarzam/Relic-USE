@@ -128,6 +128,8 @@ let activeTaskContextId: number | null = null;
 const DEFAULT_WINDOW_WIDTH_RATIO = 0.85;
 const DEFAULT_WINDOW_HEIGHT_RATIO = 0.88;
 const DEFAULT_WINDOW_ASPECT_GAP = 40;
+const TRAFFIC_LIGHT_X = 10;
+const TRAFFIC_LIGHT_Y = 9;
 
 const getDefaultWindowBounds = () => {
   const { width: workAreaWidth, height: workAreaHeight } = screen.getPrimaryDisplay().workAreaSize;
@@ -593,8 +595,8 @@ const createDashboardWindow = () => {
     show: false,
     titleBarStyle: 'hidden',
     trafficLightPosition: {
-      x: 18,
-      y: 10,
+      x: TRAFFIC_LIGHT_X,
+      y: TRAFFIC_LIGHT_Y,
     },
     webPreferences: {
       preload: getPreloadScriptPath(),
@@ -1718,8 +1720,8 @@ const createWindow = async (): Promise<BrowserWindow> => {
       show: false,
       titleBarStyle: 'hidden',
       trafficLightPosition: {
-        x: 18,
-        y: 10,
+        x: TRAFFIC_LIGHT_X,
+        y: TRAFFIC_LIGHT_Y,
       },
       webPreferences: {
         allowRunningInsecureContent: false,

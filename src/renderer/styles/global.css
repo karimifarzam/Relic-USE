@@ -323,3 +323,82 @@ iframe#webpack-dev-server-client-overlay {
 .app-titlebar-pad {
   padding-top: calc(var(--titlebar-height) / var(--app-scale));
 }
+
+:root {
+  --history-nav-transition-ms: 190ms;
+  --history-nav-transition-ease: cubic-bezier(0.32, 0.72, 0, 1);
+}
+
+::view-transition-old(root),
+::view-transition-new(root) {
+  animation-duration: var(--history-nav-transition-ms);
+  animation-timing-function: var(--history-nav-transition-ease);
+  animation-fill-mode: both;
+  will-change: transform, opacity;
+}
+
+html[data-history-nav='back']::view-transition-old(root) {
+  animation-name: history-nav-old-back;
+}
+
+html[data-history-nav='back']::view-transition-new(root) {
+  animation-name: history-nav-new-back;
+}
+
+html[data-history-nav='forward']::view-transition-old(root) {
+  animation-name: history-nav-old-forward;
+}
+
+html[data-history-nav='forward']::view-transition-new(root) {
+  animation-name: history-nav-new-forward;
+}
+
+@keyframes history-nav-old-back {
+  from {
+    transform: translateX(0%);
+    opacity: 1;
+  }
+  to {
+    transform: translateX(12%);
+    opacity: 0.9;
+  }
+}
+
+@keyframes history-nav-new-back {
+  from {
+    transform: translateX(-8%);
+    opacity: 0.9;
+  }
+  to {
+    transform: translateX(0%);
+    opacity: 1;
+  }
+}
+
+@keyframes history-nav-old-forward {
+  from {
+    transform: translateX(0%);
+    opacity: 1;
+  }
+  to {
+    transform: translateX(-12%);
+    opacity: 0.9;
+  }
+}
+
+@keyframes history-nav-new-forward {
+  from {
+    transform: translateX(8%);
+    opacity: 0.9;
+  }
+  to {
+    transform: translateX(0%);
+    opacity: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  :root {
+    --history-nav-transition-ms: 1ms;
+  }
+}

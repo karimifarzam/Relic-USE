@@ -1377,6 +1377,19 @@ function Editor() {
           <div className="flex gap-2 min-h-[38px] items-center">
             <button
               type="button"
+              onClick={handleBack}
+              className={`px-3 py-2 rounded-lg transition-all hover-lift ${
+                isDark
+                  ? 'bg-industrial-black-secondary border border-industrial-border text-industrial-white-secondary hover:text-white'
+                  : 'bg-white border border-gray-300 text-gray-700 hover:text-gray-900'
+              }`}
+              aria-label="Back to My Board"
+              title="Back to My Board"
+            >
+              <ArrowLeft className="w-3.5 h-3.5" strokeWidth={1.5} />
+            </button>
+            <button
+              type="button"
               onClick={handleDeleteClip}
               disabled={!currentSessionId || isDeletingClip}
               className={`px-4 py-2 rounded-lg text-[10px] uppercase tracking-industrial-wide font-mono font-bold transition-all hover-lift disabled:opacity-50 disabled:cursor-not-allowed hover:text-industrial-red ${

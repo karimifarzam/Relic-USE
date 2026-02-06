@@ -66,6 +66,7 @@ const VALID_CHANNELS = [
   'mark-notification-read',
   'clear-all-notifications',
   'ui:set-scaling-enabled',
+  'history:navigate',
 ] as const;
 
 export type Channels = (typeof VALID_CHANNELS)[number];

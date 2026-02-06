@@ -1,6 +1,6 @@
 import { useState, useEffect } from 'react';
 import {
-  MemoryRouter as Router,
+  HashRouter as Router,
   Routes,
   Route,
   Outlet,
@@ -16,6 +16,7 @@ import Notifications from './components/Notifications/Notifications';
 import SignIn from './components/Auth/SignIn';
 import SignUp from './components/Auth/SignUp';
 import ProtectedRoute from './components/Auth/ProtectedRoute';
+import SwipeNavigationHandler from './components/Navigation/SwipeNavigationHandler';
 import { ThemeProvider, useTheme } from './contexts/ThemeContext';
 import { AuthProvider } from './contexts/AuthContext';
 
@@ -81,6 +82,7 @@ export default function App() {
     <ThemeProvider>
       <AuthProvider>
         <Router>
+          <SwipeNavigationHandler />
           <Routes>
             {/* Auth routes - public */}
             {!isTrayWindow && (

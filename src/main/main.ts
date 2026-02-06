@@ -492,6 +492,24 @@ const getAssetPath = (...paths: string[]): string => {
   return path.join(getAssetsBasePath(), ...paths);
 };
 
+type HistoryNavigationDirection = 'back' | 'forward';
+
+const mapSwipeDirectionToHistoryNavigation = (
+  swipeDirection: string,
+): HistoryNavigationDirection | null => {
+  if (swipeDirection === 'left') return 'forward';
+  if (swipeDirection === 'right') return 'back';
+  return null;
+};
+
+const mapAppCommandToHistoryNavigation = (
+  command: string,
+): HistoryNavigationDirection | null => {
+  if (command === 'browser-backward') return 'back';
+  if (command === 'browser-forward') return 'forward';
+  return null;
+};
+
 const focusWindow = (win: BrowserWindow | null) => {
   if (!isWindowAlive(win)) return;
 
@@ -504,6 +522,20 @@ const focusWindow = (win: BrowserWindow | null) => {
   } catch (error) {
     // Ignore teardown races.
   }
+};
+
+const attachHistoryNavigationGestures = (win: BrowserWindow) => {
+  win.on('swipe', (_event, swipeDirection) => {
+    const direction = mapSwipeDirectionToHistoryNavigation(swipeDirection);
+    if (!direction) return;
+    sendToWindow(win, 'history:navigate', direction);
+  });
+
+  win.on('app-command', (_event, command) => {
+    const direction = mapAppCommandToHistoryNavigation(command);
+    if (!direction) return;
+    sendToWindow(win, 'history:navigate', direction);
+  });
 };
 
 // Add function to create tray window
@@ -571,6 +603,7 @@ const createDashboardWindow = () => {
     },
   });
   attachUiScaling(dashboardWindow);
+  attachHistoryNavigationGestures(dashboardWindow);
 
   if (app.isPackaged) {
     dashboardWindow.loadURL(`${resolveHtmlPath('index.html')}?dashboard=true`);
@@ -1636,6 +1669,7 @@ const createWindow = async (): Promise<BrowserWindow> => {
 
     mainWindow = win;
     attachUiScaling(win);
+    attachHistoryNavigationGestures(win);
 
     // Show this exact window instance when ready.
     win.on('ready-to-show', () => {

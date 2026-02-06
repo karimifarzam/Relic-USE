@@ -1,4 +1,5 @@
 import React, { useState } from 'react';
+import { useNavigate } from 'react-router-dom';
 import SessionCard from './SessionCard';
 import { useTheme } from '../../contexts/ThemeContext';
 import type { BoardViewMode } from './BoardHeader';
@@ -35,6 +36,7 @@ function StatusColumn({
   onSessionDeleted,
 }: StatusColumnProps) {
   const { isDark } = useTheme();
+  const navigate = useNavigate();
   const [confirmingSession, setConfirmingSession] = useState<Session | null>(
     null,
   );
@@ -86,6 +88,22 @@ function StatusColumn({
     setConfirmingSession(null);
     if (submitAction) {
       void submitAction();
+    }
+  };
+
+  const openSessionLikePreview = (sessionId: number) => {
+    try {
+      onSessionClick(sessionId);
+      navigate('/editor');
+    } catch (error) {
+      console.error('Failed to open session from list mode:', error);
+    }
+  };
+
+  const handleListRowKeyDown = (sessionId: number) => (e: React.KeyboardEvent) => {
+    if (e.key === 'Enter' || e.key === ' ') {
+      e.preventDefault();
+      openSessionLikePreview(sessionId);
     }
   };
 
@@ -163,52 +181,49 @@ function StatusColumn({
               return (
                 <div
                   key={session.id}
+                  role="button"
+                  tabIndex={0}
+                  onClick={() => openSessionLikePreview(session.id)}
+                  onKeyDown={handleListRowKeyDown(session.id)}
                   className={`rounded-lg border p-1.5 ${
                     isDark
                       ? 'bg-industrial-black-tertiary border-industrial-border-subtle'
                       : 'bg-white border-gray-200'
-                  }`}
+                  } cursor-pointer`}
                 >
-                  <button
-                    type="button"
-                    onClick={() => onSessionClick(session.id)}
-                    onKeyDown={handleKeyDown(session.id)}
-                    className="w-full text-left cursor-pointer"
-                  >
-                    <div className="flex items-start justify-between gap-1.5">
-                      <div className="min-w-0">
-                        <p
-                          className={`text-[10px] uppercase tracking-industrial-wide font-mono font-bold ${
-                            isDark ? 'text-white' : 'text-gray-900'
-                          }`}
-                        >
-                          Session #{session.id}
-                        </p>
-                        <p
-                          className={`text-[8px] font-mono ${
-                            isDark
-                              ? 'text-industrial-white-tertiary'
-                              : 'text-gray-500'
-                          }`}
-                        >
-                          {formatCreatedAt(session.created_at)}
-                        </p>
-                      </div>
-                      <span
-                        className={`text-[8px] uppercase tracking-industrial-wide font-mono font-bold px-1.5 py-0.5 rounded border ${
-                          isDark
-                            ? isPassive
-                              ? 'bg-black/90 border-industrial-border-subtle text-white'
-                              : 'bg-industrial-orange/10 border-industrial-orange/30 text-industrial-orange'
-                            : isPassive
-                              ? 'bg-gray-100 border-gray-300 text-gray-700'
-                              : 'bg-blue-50 border-blue-200 text-blue-700'
+                  <div className="flex items-start justify-between gap-1.5">
+                    <div className="min-w-0">
+                      <p
+                        className={`text-[10px] uppercase tracking-industrial-wide font-mono font-bold ${
+                          isDark ? 'text-white' : 'text-gray-900'
                         }`}
                       >
-                        {session.session_status}
-                      </span>
+                        Session #{session.id}
+                      </p>
+                      <p
+                        className={`text-[8px] font-mono ${
+                          isDark
+                            ? 'text-industrial-white-tertiary'
+                            : 'text-gray-500'
+                        }`}
+                      >
+                        {formatCreatedAt(session.created_at)}
+                      </p>
                     </div>
-                  </button>
+                    <span
+                      className={`text-[8px] uppercase tracking-industrial-wide font-mono font-bold px-1.5 py-0.5 rounded border ${
+                        isDark
+                          ? isPassive
+                            ? 'bg-black/90 border-industrial-border-subtle text-white'
+                            : 'bg-industrial-orange/10 border-industrial-orange/30 text-industrial-orange'
+                          : isPassive
+                            ? 'bg-gray-100 border-gray-300 text-gray-700'
+                            : 'bg-blue-50 border-blue-200 text-blue-700'
+                      }`}
+                    >
+                      {session.session_status}
+                    </span>
+                  </div>
                   <div className="mt-0.5 flex items-center justify-between gap-1.5">
                     <span
                       className={`text-[8px] font-mono ${

@@ -1,7 +1,8 @@
-import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
+import React, { useState, useEffect, useMemo, useRef } from 'react';
 import RecordingCard from './RecordingCard';
 import { useTheme } from '../../contexts/ThemeContext';
 import { getLatestTimelineTimeSeconds } from '../../../shared/sessionTimeline';
+import { formatDurationHms } from '../../../shared/timeFormatting';
 
 interface Session {
   id: number;
@@ -57,15 +58,6 @@ function SessionCard({
     }
     return Math.max(0, Math.floor(session.duration || 0));
   }, [session.duration, recordings]);
-
-  // Memoize formatSessionDuration to prevent recreation on every render
-  const formatSessionDuration = useCallback((seconds: number): string => {
-    const safeSeconds = Math.max(0, Math.floor(seconds));
-    const hours = Math.floor(safeSeconds / 3600);
-    const minutes = Math.floor((safeSeconds % 3600) / 60);
-    const secs = safeSeconds % 60;
-    return `${hours}h ${minutes}m ${secs}s`;
-  }, []);
 
   // Fetch task details if session has a task_id
   useEffect(() => {
@@ -207,14 +199,17 @@ function SessionCard({
       {recordings.length > 0 && (
         <div className="h-fit">
           {taskTitle && (
-            <div className={`mb-2 px-2 py-1 rounded-md border text-[9px] uppercase tracking-industrial-wide font-mono font-bold ${isDark ? 'bg-industrial-orange/10 border-industrial-orange/30 text-industrial-orange' : 'bg-blue-50 border-blue-200 text-blue-600'}`}>
-              <span className="opacity-60">Task: </span>{taskTitle}
+            <div
+              className={`mb-2 px-2 py-1 rounded-md border text-[9px] uppercase tracking-industrial-wide font-mono font-bold ${isDark ? 'bg-industrial-orange/10 border-industrial-orange/30 text-industrial-orange' : 'bg-blue-50 border-blue-200 text-blue-600'}`}
+            >
+              <span className="opacity-60">Task: </span>
+              {taskTitle}
             </div>
           )}
           <RecordingCard
             key={recordings[recordings.length - 1].id}
             title={`Recording - Session #${session.id}`}
-            date={formatSessionDuration(computedDuration)}
+            date={formatDurationHms(computedDuration)}
             type={recordings[recordings.length - 1].type}
             thumbnail={recordings[recordings.length - 1].thumbnail}
             sessionId={session.id}
@@ -250,33 +245,47 @@ function SessionCard({
                 className={`w-full max-w-md p-6 rounded-lg border ${isDark ? 'bg-industrial-black-secondary border-industrial-border' : 'bg-white border-gray-300'}`}
                 onClick={(e) => e.stopPropagation()}
               >
-                <h3 className={`text-lg font-mono font-bold mb-4 ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                <h3
+                  className={`text-lg font-mono font-bold mb-4 ${isDark ? 'text-white' : 'text-gray-900'}`}
+                >
                   Confirm Submission
                 </h3>
 
-                <div className={`space-y-3 mb-6 ${isDark ? 'text-industrial-white-secondary' : 'text-gray-600'}`}>
-                  <div className={`p-3 rounded-lg border ${isDark ? 'bg-industrial-black-tertiary border-industrial-border' : 'bg-gray-50 border-gray-200'}`}>
+                <div
+                  className={`space-y-3 mb-6 ${isDark ? 'text-industrial-white-secondary' : 'text-gray-600'}`}
+                >
+                  <div
+                    className={`p-3 rounded-lg border ${isDark ? 'bg-industrial-black-tertiary border-industrial-border' : 'bg-gray-50 border-gray-200'}`}
+                  >
                     <div className="flex justify-between mb-2">
                       <span className="text-sm font-mono">Duration:</span>
-                      <span className={`text-sm font-mono font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                        {formatSessionDuration(computedDuration)}
+                      <span
+                        className={`text-sm font-mono font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}
+                      >
+                        {formatDurationHms(computedDuration)}
                       </span>
                     </div>
                     <div className="flex justify-between mb-2">
                       <span className="text-sm font-mono">Recordings:</span>
-                      <span className={`text-sm font-mono font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                      <span
+                        className={`text-sm font-mono font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}
+                      >
                         {recordings.length}
                       </span>
                     </div>
                     <div className="flex justify-between">
                       <span className="text-sm font-mono">Comments:</span>
-                      <span className={`text-sm font-mono font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>
+                      <span
+                        className={`text-sm font-mono font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}
+                      >
                         {comments}
                       </span>
                     </div>
                   </div>
 
-                  <p className={`text-xs font-mono ${isDark ? 'text-yellow-400' : 'text-yellow-600'}`}>
+                  <p
+                    className={`text-xs font-mono ${isDark ? 'text-yellow-400' : 'text-yellow-600'}`}
+                  >
                     ⚠ Once submitted, this session cannot be edited.
                   </p>
                 </div>
@@ -326,7 +335,9 @@ function SessionCard({
               >
                 <div
                   className={`px-5 py-4 border-b ${
-                    isDark ? 'border-industrial-border-subtle' : 'border-gray-200'
+                    isDark
+                      ? 'border-industrial-border-subtle'
+                      : 'border-gray-200'
                   }`}
                 >
                   <h3
@@ -345,13 +356,15 @@ function SessionCard({
                         : 'text-gray-700'
                     }`}
                   >
-                    This will permanently delete this clip and all associated recordings.
-                    Continue?
+                    This will permanently delete this clip and all associated
+                    recordings. Continue?
                   </p>
                 </div>
                 <div
                   className={`px-5 py-4 border-t flex items-center justify-end gap-2 ${
-                    isDark ? 'border-industrial-border-subtle' : 'border-gray-200'
+                    isDark
+                      ? 'border-industrial-border-subtle'
+                      : 'border-gray-200'
                   }`}
                 >
                   <button

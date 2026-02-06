@@ -1,4 +1,4 @@
-import { useEffect, useState, useMemo, useCallback } from 'react';
+import { useEffect, useState, useMemo, useCallback, useRef } from 'react';
 import BoardHeader from './BoardHeader';
 import StatusColumn from './StatusColumn';
 import { useTheme } from '../../contexts/ThemeContext';
@@ -24,35 +24,57 @@ function Dashboard() {
   const [sessions, setSessions] = useState<Session[]>([]);
   const [viewMode, setViewMode] = useState<BoardViewMode>('preview');
   const [activeSessionId, setActiveSessionId] = useState<number | null>(null);
-  const [submittingSessionId, setSubmittingSessionId] = useState<number | null>(null);
-  const [submissionProgress, setSubmissionProgress] = useState<SubmissionProgress | null>(null);
+  const [submittingSessionId, setSubmittingSessionId] = useState<number | null>(
+    null,
+  );
+  const [submissionProgress, setSubmissionProgress] =
+    useState<SubmissionProgress | null>(null);
   const [notification, setNotification] = useState<{
     type: 'success' | 'error';
     message: string;
   } | null>(null);
   const { isDark } = useTheme();
+  const notificationTimeoutRef = useRef<number | null>(null);
 
-  // Memoize groupedSessions calculation
-  const groupedSessions = useMemo(
-    () => ({
-      draft: sessions.filter((s) => s.approval_state === 'draft'),
-      submitted: sessions.filter((s) => s.approval_state === 'submitted'),
-      rejected: sessions.filter((s) => s.approval_state === 'rejected'),
-      approved: sessions.filter((s) => s.approval_state === 'approved'),
-    }),
-    [sessions],
-  );
+  // Group sessions in one pass to avoid repeated filtering per render.
+  const groupedSessions = useMemo(() => {
+    const grouped = {
+      draft: [] as Session[],
+      submitted: [] as Session[],
+      rejected: [] as Session[],
+      approved: [] as Session[],
+    };
+
+    sessions.forEach((currentSession) => {
+      grouped[currentSession.approval_state].push(currentSession);
+    });
+
+    return grouped;
+  }, [sessions]);
 
   const fetchSessions = useCallback(async () => {
     try {
       const allSessions =
         await window.electron.ipcRenderer.invoke('get-sessions');
-      // Force update by creating a new array reference
-      setSessions([...allSessions]);
+      setSessions(allSessions);
     } catch (error) {
       console.error('Failed to fetch sessions:', error);
     }
   }, []);
+
+  const showTimedNotification = useCallback(
+    (type: 'success' | 'error', message: string) => {
+      if (notificationTimeoutRef.current !== null) {
+        window.clearTimeout(notificationTimeoutRef.current);
+      }
+      setNotification({ type, message });
+      notificationTimeoutRef.current = window.setTimeout(() => {
+        setNotification(null);
+        notificationTimeoutRef.current = null;
+      }, 5000);
+    },
+    [],
+  );
 
   useEffect(() => {
     fetchSessions();
@@ -115,102 +137,127 @@ function Dashboard() {
     };
   }, [fetchSessions]);
 
-  // Memoize session submission handler
-  const handleSessionSubmit = useCallback((sessionId: number) => {
-    return async () => {
-      try {
-        setSubmittingSessionId(sessionId);
-        setSubmissionProgress({ current: 0, total: 1, status: 'Starting...' });
-
-        const result = await window.electron.ipcRenderer.invoke('submit-session', sessionId);
-
-        if (result.success) {
-          setNotification({
-            type: 'success',
-            message: `Session submitted successfully! +${result.pointsEarned || 0} points earned`,
-          });
-          setTimeout(() => setNotification(null), 5000);
-        } else {
-          setNotification({
-            type: 'error',
-            message: result.error || 'Failed to submit session',
-          });
-          setTimeout(() => setNotification(null), 5000);
-        }
-
-        setSubmittingSessionId(null);
-        setSubmissionProgress(null);
-        fetchSessions();
-      } catch (error: any) {
-        console.error('Submit error:', error);
-        setNotification({
-          type: 'error',
-          message: error.message || 'Failed to submit session',
-        });
-        setTimeout(() => setNotification(null), 5000);
-        setSubmittingSessionId(null);
-        setSubmissionProgress(null);
+  useEffect(() => {
+    return () => {
+      if (notificationTimeoutRef.current !== null) {
+        window.clearTimeout(notificationTimeoutRef.current);
       }
     };
-  }, [fetchSessions]);
+  }, []);
 
-  const handleSessionClick = async (sessionId: number) => {
+  // Memoize session submission handler
+  const handleSessionSubmit = useCallback(
+    (sessionId: number) => {
+      return async () => {
+        try {
+          setSubmittingSessionId(sessionId);
+          setSubmissionProgress({
+            current: 0,
+            total: 1,
+            status: 'Starting...',
+          });
+
+          const result = await window.electron.ipcRenderer.invoke(
+            'submit-session',
+            sessionId,
+          );
+
+          if (result.success) {
+            showTimedNotification(
+              'success',
+              `Session submitted successfully! +${result.pointsEarned || 0} points earned`,
+            );
+          } else {
+            showTimedNotification(
+              'error',
+              result.error || 'Failed to submit session',
+            );
+          }
+        } catch (error: any) {
+          console.error('Submit error:', error);
+          showTimedNotification(
+            'error',
+            error.message || 'Failed to submit session',
+          );
+        } finally {
+          setSubmittingSessionId(null);
+          setSubmissionProgress(null);
+          fetchSessions();
+        }
+      };
+    },
+    [fetchSessions, showTimedNotification],
+  );
+
+  const handleSessionClick = useCallback(async (sessionId: number) => {
     try {
       await window.electron.ipcRenderer.invoke('show-editor', sessionId);
     } catch (error) {
       console.error('Failed to open editor:', error);
     }
-  };
+  }, []);
 
   return (
-    <main className={`min-h-0 ${isDark ? 'bg-industrial-black-primary' : 'bg-white'}`}>
+    <main
+      className={`min-h-0 ${isDark ? 'bg-industrial-black-primary' : 'bg-white'}`}
+    >
       <div className="py-6">
         <BoardHeader viewMode={viewMode} onViewModeChange={setViewMode} />
         {/* Progress Overlay */}
-      {submittingSessionId && submissionProgress && (
-        <div className="fixed top-20 right-6 z-50">
-          <div className={`p-4 rounded-lg shadow-lg border ${isDark ? 'bg-industrial-black-secondary border-industrial-border' : 'bg-white border-gray-300'}`}>
-            <div className="flex items-center gap-3">
-              <div className={`w-8 h-8 rounded-full border-2 border-t-transparent animate-spin ${isDark ? 'border-industrial-orange' : 'border-blue-500'}`}></div>
-              <div>
-                <p className={`text-sm font-mono font-semibold ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                  Uploading to Cloud
-                </p>
-                <p className={`text-xs font-mono ${isDark ? 'text-industrial-white-tertiary' : 'text-gray-500'}`}>
-                  {submissionProgress.status}
-                </p>
-                <div className="mt-2 w-48 h-1.5 bg-gray-200 rounded-full overflow-hidden">
-                  <div
-                    className={`h-full transition-all duration-300 ${isDark ? 'bg-industrial-orange' : 'bg-blue-500'}`}
-                    style={{
-                      width: `${submissionProgress.total > 0 ? (submissionProgress.current / submissionProgress.total) * 100 : 0}%`,
-                    }}
-                  />
+        {submittingSessionId && submissionProgress && (
+          <div className="fixed top-20 right-6 z-50">
+            <div
+              className={`p-4 rounded-lg shadow-lg border ${isDark ? 'bg-industrial-black-secondary border-industrial-border' : 'bg-white border-gray-300'}`}
+            >
+              <div className="flex items-center gap-3">
+                <div
+                  className={`w-8 h-8 rounded-full border-2 border-t-transparent animate-spin ${isDark ? 'border-industrial-orange' : 'border-blue-500'}`}
+                ></div>
+                <div>
+                  <p
+                    className={`text-sm font-mono font-semibold ${isDark ? 'text-white' : 'text-gray-900'}`}
+                  >
+                    Uploading to Cloud
+                  </p>
+                  <p
+                    className={`text-xs font-mono ${isDark ? 'text-industrial-white-tertiary' : 'text-gray-500'}`}
+                  >
+                    {submissionProgress.status}
+                  </p>
+                  <div className="mt-2 w-48 h-1.5 bg-gray-200 rounded-full overflow-hidden">
+                    <div
+                      className={`h-full transition-all duration-300 ${isDark ? 'bg-industrial-orange' : 'bg-blue-500'}`}
+                      style={{
+                        width: `${submissionProgress.total > 0 ? (submissionProgress.current / submissionProgress.total) * 100 : 0}%`,
+                      }}
+                    />
+                  </div>
                 </div>
               </div>
             </div>
           </div>
-        </div>
-      )}
+        )}
 
-      {/* Notification Toast */}
-      {notification && (
-        <div className="fixed top-20 right-6 z-50 animate-slide-in">
-          <div
-            className={`p-4 rounded-lg shadow-lg border ${
-              notification.type === 'success'
-                ? isDark
-                  ? 'bg-green-500/10 border-green-500/30 text-green-400'
-                  : 'bg-green-50 border-green-200 text-green-700'
-                : isDark
-                  ? 'bg-red-500/10 border-red-500/30 text-red-400'
-                  : 'bg-red-50 border-red-200 text-red-700'
-            }`}
-          >
-            <p className="text-sm font-mono font-semibold">{notification.message}</p>
+        {/* Notification Toast */}
+        {notification && (
+          <div className="fixed top-20 right-6 z-50 animate-slide-in">
+            <div
+              className={`p-4 rounded-lg shadow-lg border ${
+                notification.type === 'success'
+                  ? isDark
+                    ? 'bg-green-500/10 border-green-500/30 text-green-400'
+                    : 'bg-green-50 border-green-200 text-green-700'
+                  : isDark
+                    ? 'bg-red-500/10 border-red-500/30 text-red-400'
+                    : 'bg-red-50 border-red-200 text-red-700'
+              }`}
+            >
+              <p className="text-sm font-mono font-semibold">
+                {notification.message}
+              </p>
+            </div>
           </div>
-        </div>
-      )}
+        )}
 
         <div className="grid grid-cols-4 gap-4 pb-6">
           <StatusColumn

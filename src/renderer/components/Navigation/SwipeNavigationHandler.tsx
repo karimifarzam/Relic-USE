@@ -3,6 +3,7 @@ import { useEffect, useRef } from 'react';
 import { useLocation, useNavigate } from 'react-router-dom';
 import {
   getHistoryDirectionFromHorizontalDelta,
+  hasScrollableHorizontalAncestor,
   isHistoryNavigationDirection,
   shouldConsiderWheelForHistoryNavigation,
   shouldTriggerHistoryNavigationFromGesture,
@@ -15,9 +16,7 @@ const IPC_TO_WHEEL_SUPPRESSION_MS = 1000;
 const HISTORY_NAV_TRANSITION_FALLBACK_MS = 220;
 
 type ViewTransitionCapableDocument = Document & {
-  startViewTransition?: (
-    updateCallback: () => void | Promise<void>,
-  ) => {
+  startViewTransition?: (updateCallback: () => void | Promise<void>) => {
     finished: Promise<void>;
   };
 };
@@ -164,7 +163,8 @@ export default function SwipeNavigationHandler() {
       }
 
       const stillInCooldown =
-        now - gesture.lastTrackpadNavigationAt < TRACKPAD_NAVIGATION_COOLDOWN_MS;
+        now - gesture.lastTrackpadNavigationAt <
+        TRACKPAD_NAVIGATION_COOLDOWN_MS;
       if (stillInCooldown) {
         resetGesture();
         return;
@@ -189,7 +189,19 @@ export default function SwipeNavigationHandler() {
     };
 
     const handleWheel = (event: WheelEvent) => {
-      if (!shouldConsiderWheelForHistoryNavigation(event.deltaX, event.deltaY)) {
+      if (!locationPathnameRef.current.startsWith('/editor')) {
+        resetGesture();
+        return;
+      }
+
+      if (
+        !shouldConsiderWheelForHistoryNavigation(event.deltaX, event.deltaY)
+      ) {
+        return;
+      }
+
+      if (hasScrollableHorizontalAncestor(event.target, event.deltaX)) {
+        resetGesture();
         return;
       }
 

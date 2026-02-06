@@ -45,7 +45,10 @@ describe('SwipeNavigationHandler', () => {
     );
 
     expect(screen.getByTestId('location-path')).toHaveTextContent('/editor');
-    expect(onSpy).toHaveBeenCalledWith('history:navigate', expect.any(Function));
+    expect(onSpy).toHaveBeenCalledWith(
+      'history:navigate',
+      expect.any(Function),
+    );
     expect(historyCallback).not.toBeNull();
 
     act(() => {
@@ -155,6 +158,46 @@ describe('SwipeNavigationHandler', () => {
     });
 
     expect(screen.getByTestId('location-path')).toHaveTextContent('/');
+  });
+
+  it('ignores wheel gestures inside a horizontally scrollable ancestor', () => {
+    jest.useFakeTimers();
+
+    render(
+      <MemoryRouter initialEntries={['/', '/editor']} initialIndex={1}>
+        <SwipeNavigationHandler />
+        <div data-testid="scroll-parent">
+          <div data-testid="scroll-child">
+            <LocationProbe />
+          </div>
+        </div>
+      </MemoryRouter>,
+    );
+
+    const scrollParent = screen.getByTestId('scroll-parent');
+    const scrollChild = screen.getByTestId('scroll-child');
+
+    Object.defineProperty(scrollParent, 'scrollWidth', {
+      configurable: true,
+      value: 500,
+    });
+    Object.defineProperty(scrollParent, 'clientWidth', {
+      configurable: true,
+      value: 120,
+    });
+    Object.defineProperty(scrollParent, 'scrollLeft', {
+      configurable: true,
+      writable: true,
+      value: 80,
+    });
+
+    act(() => {
+      fireEvent.wheel(scrollChild, { deltaX: -160, deltaY: 6 });
+      fireEvent.wheel(scrollChild, { deltaX: -150, deltaY: 5 });
+      jest.advanceTimersByTime(150);
+    });
+
+    expect(screen.getByTestId('location-path')).toHaveTextContent('/editor');
   });
 
   it('uses the view transition API when available', () => {

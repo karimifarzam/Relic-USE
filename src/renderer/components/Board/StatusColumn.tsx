@@ -2,6 +2,10 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import SessionCard from './SessionCard';
 import { useTheme } from '../../contexts/ThemeContext';
+import {
+  formatBoardTimestamp,
+  formatDurationHms,
+} from '../../../shared/timeFormatting';
 import type { BoardViewMode } from './BoardHeader';
 
 interface Session {
@@ -63,25 +67,6 @@ function StatusColumn({
     }
   };
 
-  const formatDuration = (seconds: number) => {
-    const safeSeconds = Math.max(0, Math.floor(seconds || 0));
-    const hours = Math.floor(safeSeconds / 3600);
-    const minutes = Math.floor((safeSeconds % 3600) / 60);
-    const secs = safeSeconds % 60;
-    return `${hours}h ${minutes}m ${secs}s`;
-  };
-
-  const formatCreatedAt = (iso: string) => {
-    const parsed = Date.parse(iso || '');
-    if (!Number.isFinite(parsed)) return 'Unknown';
-    return new Date(parsed).toLocaleString([], {
-      month: 'short',
-      day: 'numeric',
-      hour: 'numeric',
-      minute: '2-digit',
-    });
-  };
-
   const handleConfirmSubmit = () => {
     if (!confirmingSession) return;
     const submitAction = onSessionSubmit?.(confirmingSession.id);
@@ -100,12 +85,13 @@ function StatusColumn({
     }
   };
 
-  const handleListRowKeyDown = (sessionId: number) => (e: React.KeyboardEvent) => {
-    if (e.key === 'Enter' || e.key === ' ') {
-      e.preventDefault();
-      openSessionLikePreview(sessionId);
-    }
-  };
+  const handleListRowKeyDown =
+    (sessionId: number) => (e: React.KeyboardEvent) => {
+      if (e.key === 'Enter' || e.key === ' ') {
+        e.preventDefault();
+        openSessionLikePreview(sessionId);
+      }
+    };
 
   return (
     <div className="w-full">
@@ -114,24 +100,28 @@ function StatusColumn({
           className="w-2 h-2 rounded-full status-indicator active"
           style={{ backgroundColor: getColumnColor(title) }}
         />
-        <h2 className={`text-[11px] uppercase tracking-industrial-wide font-mono font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>
+        <h2
+          className={`text-[11px] uppercase tracking-industrial-wide font-mono font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}
+        >
           {title}
         </h2>
-        <span className={`text-[10px] font-mono ${isDark ? 'text-industrial-white-tertiary' : 'text-gray-500'}`}>
+        <span
+          className={`text-[10px] font-mono ${isDark ? 'text-industrial-white-tertiary' : 'text-gray-500'}`}
+        >
           {sessions.length}
         </span>
       </div>
 
       {/* Tray underlay container */}
-      <div className={`rounded-lg border p-4 ${isDark ? 'bg-industrial-black-secondary border-industrial-border' : 'bg-gray-50 border-gray-200'}`}>
+      <div
+        className={`rounded-lg border p-4 ${isDark ? 'bg-industrial-black-secondary border-industrial-border' : 'bg-gray-50 border-gray-200'}`}
+      >
         {viewMode === 'preview' ? (
           <div className="space-y-4 max-h-[700px] overflow-y-auto pr-2 pt-2 hide-scrollbar show-scrollbar-on-hover">
             {sessions.length === 0 ? (
               <p
                 className={`-mt-3 text-[9px] font-mono px-1 ${
-                  isDark
-                    ? 'text-industrial-white-tertiary'
-                    : 'text-gray-500'
+                  isDark ? 'text-industrial-white-tertiary' : 'text-gray-500'
                 }`}
               >
                 No sessions yet.
@@ -160,9 +150,7 @@ function StatusColumn({
             {sessions.length === 0 ? (
               <p
                 className={`-mt-3 text-[9px] font-mono px-1 ${
-                  isDark
-                    ? 'text-industrial-white-tertiary'
-                    : 'text-gray-500'
+                  isDark ? 'text-industrial-white-tertiary' : 'text-gray-500'
                 }`}
               >
                 No sessions yet.
@@ -207,7 +195,7 @@ function StatusColumn({
                             : 'text-gray-500'
                         }`}
                       >
-                        {formatCreatedAt(session.created_at)}
+                        {formatBoardTimestamp(session.created_at)}
                       </p>
                     </div>
                     <span
@@ -232,7 +220,7 @@ function StatusColumn({
                           : 'text-gray-500'
                       }`}
                     >
-                      {formatDuration(session.duration)}
+                      {formatDurationHms(session.duration)}
                     </span>
                     {canSubmit ? (
                       <button
@@ -313,7 +301,7 @@ function StatusColumn({
                       isDark ? 'text-white' : 'text-gray-900'
                     }`}
                   >
-                    {formatDuration(confirmingSession.duration)}
+                    {formatDurationHms(confirmingSession.duration)}
                   </span>
                 </div>
                 <div className="flex justify-between">
@@ -323,7 +311,7 @@ function StatusColumn({
                       isDark ? 'text-white' : 'text-gray-900'
                     }`}
                   >
-                    {formatCreatedAt(confirmingSession.created_at)}
+                    {formatBoardTimestamp(confirmingSession.created_at)}
                   </span>
                 </div>
               </div>

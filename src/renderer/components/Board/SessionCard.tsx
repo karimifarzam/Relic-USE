@@ -1,6 +1,7 @@
-import React, { useState, useEffect, useCallback } from 'react';
+import React, { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import RecordingCard from './RecordingCard';
 import { useTheme } from '../../contexts/ThemeContext';
+import { getLatestTimelineTimeSeconds } from '../../../shared/sessionTimeline';
 
 interface Session {
   id: number;
@@ -44,8 +45,16 @@ function SessionCard({
   const [showConfirmDialog, setShowConfirmDialog] = useState(false);
   const [comments, setComments] = useState<number>(0);
   const { isDark } = useTheme();
+  const persistedDurationVersions = useRef<Set<string>>(new Set());
 
   const isSubmitting = submittingSessionId === session.id;
+
+  const computedDuration = useMemo(() => {
+    if (recordings.length > 0) {
+      return getLatestTimelineTimeSeconds(recordings);
+    }
+    return Math.max(0, Math.floor(session.duration || 0));
+  }, [session.duration, recordings]);
 
   // Memoize formatSessionDuration to prevent recreation on every render
   const formatSessionDuration = useCallback((seconds: number): string => {
@@ -84,13 +93,13 @@ function SessionCard({
     // Can submit if:
     // 1. Session is in draft state
     // 2. Session is not currently recording
-    // 3. Has some duration
+    // 3. Has at least one recording
     setCanSubmit(
       session.approval_state === 'draft' &&
         session.id !== activeSessionId &&
-        session.duration > 0,
+        recordings.length > 0,
     );
-  }, [session.approval_state, session.id, activeSessionId, session.duration]);
+  }, [session.approval_state, session.id, activeSessionId, recordings.length]);
 
   // Load recordings and refresh on new recordings
   useEffect(() => {
@@ -124,6 +133,22 @@ function SessionCard({
       newRecordingListener?.();
     };
   }, [session.id]);
+
+  useEffect(() => {
+    if (session.id === activeSessionId) return;
+    if (session.duration === computedDuration) return;
+
+    const persistKey = `${session.id}:${computedDuration}`;
+    if (persistedDurationVersions.current.has(persistKey)) return;
+
+    persistedDurationVersions.current.add(persistKey);
+    void window.electron.ipcRenderer
+      .invoke('update-session-duration', session.id, computedDuration)
+      .catch((error) => {
+        console.error('Failed to persist computed session duration:', error);
+        persistedDurationVersions.current.delete(persistKey);
+      });
+  }, [session.id, session.duration, computedDuration, activeSessionId]);
 
   // Fetch comment count
   useEffect(() => {
@@ -179,7 +204,7 @@ function SessionCard({
           <RecordingCard
             key={recordings[recordings.length - 1].id}
             title={`Recording - Session #${session.id}`}
-            date={formatSessionDuration(session.duration)}
+            date={formatSessionDuration(computedDuration)}
             type={recordings[recordings.length - 1].type}
             thumbnail={recordings[recordings.length - 1].thumbnail}
             sessionId={session.id}
@@ -224,7 +249,7 @@ function SessionCard({
                     <div className="flex justify-between mb-2">
                       <span className="text-sm font-mono">Duration:</span>
                       <span className={`text-sm font-mono font-bold ${isDark ? 'text-white' : 'text-gray-900'}`}>
-                        {formatSessionDuration(session.duration)}
+                        {formatSessionDuration(computedDuration)}
                       </span>
                     </div>
                     <div className="flex justify-between mb-2">

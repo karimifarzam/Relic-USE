@@ -336,7 +336,7 @@ export const dbHelpers = {
         const stmt = getDb().prepare(`
           SELECT * FROM recordings
           WHERE session_id = ?
-          ORDER BY timestamp DESC
+          ORDER BY timestamp ASC
         `);
         const rows = stmt.all(sessionId);
         resolve(rows as Recording[]);

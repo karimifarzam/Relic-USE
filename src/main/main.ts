@@ -74,6 +74,40 @@ const SENSITIVE_KEYWORDS = [
   'spankbang',
 ];
 
+const isBrokenPipeError = (error: unknown): error is NodeJS.ErrnoException => {
+  return (
+    typeof error === 'object' &&
+    error !== null &&
+    'code' in error &&
+    (error as NodeJS.ErrnoException).code === 'EPIPE'
+  );
+};
+
+const wrapConsoleMethod = <T extends (...args: any[]) => void>(method: T): T => {
+  return ((...args: unknown[]) => {
+    try {
+      method(...args);
+    } catch (error) {
+      if (!isBrokenPipeError(error)) {
+        throw error;
+      }
+    }
+  }) as T;
+};
+
+const ignoreStreamErrors = (stream: NodeJS.WriteStream | undefined) => {
+  if (!stream) return;
+  stream.on('error', () => {
+    // Avoid app crashes when stdout/stderr are detached by dev tooling.
+  });
+};
+
+console.log = wrapConsoleMethod(console.log.bind(console));
+console.warn = wrapConsoleMethod(console.warn.bind(console));
+console.error = wrapConsoleMethod(console.error.bind(console));
+ignoreStreamErrors(process.stdout);
+ignoreStreamErrors(process.stderr);
+
 class AppUpdater {
   constructor() {
     log.transports.file.level = 'info';
@@ -88,6 +122,7 @@ let ipcHandlersRegistered = false;
 let mainWindow: BrowserWindow | null = null;
 let trayWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
+let creatingMainWindow: Promise<BrowserWindow> | null = null;
 
 const DEFAULT_WINDOW_WIDTH_RATIO = 0.85;
 const DEFAULT_WINDOW_HEIGHT_RATIO = 0.88;
@@ -115,26 +150,79 @@ const UI_SCALE_MIN = 0.75;
 const UI_SCALE_MAX = 1.25;
 const uiScaleEnabledWebContents = new Set<number>();
 
+const isWindowAlive = (
+  win: BrowserWindow | null | undefined,
+): win is BrowserWindow => {
+  if (!win) return false;
+  try {
+    return !win.isDestroyed();
+  } catch (error) {
+    return false;
+  }
+};
+
+const isWebContentsAlive = (
+  webContents: Electron.WebContents | null | undefined,
+): webContents is Electron.WebContents => {
+  if (!webContents) return false;
+  try {
+    return !webContents.isDestroyed();
+  } catch (error) {
+    return false;
+  }
+};
+
+const getSafeWebContents = (
+  win: BrowserWindow | null | undefined,
+): Electron.WebContents | null => {
+  if (!isWindowAlive(win)) return null;
+
+  try {
+    const webContents = win.webContents;
+    if (!isWebContentsAlive(webContents)) return null;
+    return webContents;
+  } catch (error) {
+    return null;
+  }
+};
+
 const computeUiZoomFactor = (width: number, height: number) => {
   const scale = Math.min(width / UI_SCALE_BASE_WIDTH, height / UI_SCALE_BASE_HEIGHT);
   return Math.max(UI_SCALE_MIN, Math.min(UI_SCALE_MAX, scale));
 };
 
 const applyUiZoom = (win: BrowserWindow) => {
-  if (win.isDestroyed()) return;
-  const { width, height } = win.getContentBounds();
-  win.webContents.setZoomFactor(computeUiZoomFactor(width, height));
+  const webContents = getSafeWebContents(win);
+  if (!webContents) return;
+
+  let width = 0;
+  let height = 0;
+  try {
+    ({ width, height } = win.getContentBounds());
+  } catch (error) {
+    return;
+  }
+
+  const latestWebContents = getSafeWebContents(win);
+  if (!latestWebContents) return;
+
+  try {
+    latestWebContents.setZoomFactor(computeUiZoomFactor(width, height));
+  } catch (error) {
+    // Ignore teardown races while a window is closing.
+  }
 };
 
 const attachUiScaling = (win: BrowserWindow) => {
+  const webContentsId = win.webContents.id;
+
   win.on('resize', () => {
-    if (uiScaleEnabledWebContents.has(win.webContents.id)) {
-      applyUiZoom(win);
-    }
+    if (!uiScaleEnabledWebContents.has(webContentsId)) return;
+    applyUiZoom(win);
   });
 
   win.on('closed', () => {
-    uiScaleEnabledWebContents.delete(win.webContents.id);
+    uiScaleEnabledWebContents.delete(webContentsId);
   });
 };
 let isRecording = false;
@@ -147,19 +235,42 @@ let cursorMonitorInFlight = false;
 const CURSOR_MONITOR_INTERVAL_MS = 100;
 
 function sendToRecordingWindows(channel: string, ...args: unknown[]) {
-  if (mainWindow && !mainWindow.isDestroyed()) {
-    mainWindow.webContents.send(channel, ...args);
+  const mainWebContents = getSafeWebContents(mainWindow);
+  if (mainWebContents) {
+    try {
+      mainWebContents.send(channel, ...args);
+    } catch (error) {
+      // Window may be torn down between checks.
+    }
   }
-  if (trayWindow && !trayWindow.isDestroyed()) {
-    trayWindow.webContents.send(channel, ...args);
+
+  const trayWebContents = getSafeWebContents(trayWindow);
+  if (trayWebContents) {
+    try {
+      trayWebContents.send(channel, ...args);
+    } catch (error) {
+      // Window may be torn down between checks.
+    }
+  }
+}
+
+function sendToWindow(
+  win: BrowserWindow | null | undefined,
+  channel: string,
+  ...args: unknown[]
+) {
+  const webContents = getSafeWebContents(win);
+  if (!webContents) return;
+  try {
+    webContents.send(channel, ...args);
+  } catch (error) {
+    // Window may be torn down between checks.
   }
 }
 
 function sendToAllWindows(channel: string, ...args: unknown[]) {
   BrowserWindow.getAllWindows().forEach((window) => {
-    if (!window.isDestroyed()) {
-      window.webContents.send(channel, ...args);
-    }
+    sendToWindow(window, channel, ...args);
   });
 }
 
@@ -316,6 +427,26 @@ function isSensitiveWindow(windowInfo: any) {
   );
 }
 
+process.on('uncaughtException', (error) => {
+  console.error('Uncaught exception in main process:', error);
+});
+
+process.on('unhandledRejection', (reason) => {
+  console.error('Unhandled rejection in main process:', reason);
+});
+
+app.on('render-process-gone', (_event, webContents, details) => {
+  console.error('Render process gone:', {
+    id: webContents.id,
+    reason: details.reason,
+    exitCode: details.exitCode,
+  });
+});
+
+app.on('child-process-gone', (_event, details) => {
+  console.error('Child process gone:', details);
+});
+
 if (process.env.NODE_ENV === 'production') {
   const sourceMapSupport = require('source-map-support');
   sourceMapSupport.install();
@@ -361,9 +492,23 @@ const getAssetPath = (...paths: string[]): string => {
   return path.join(getAssetsBasePath(), ...paths);
 };
 
+const focusWindow = (win: BrowserWindow | null) => {
+  if (!isWindowAlive(win)) return;
+
+  try {
+    if (win.isMinimized()) {
+      win.restore();
+    }
+    win.show();
+    win.focus();
+  } catch (error) {
+    // Ignore teardown races.
+  }
+};
+
 // Add function to create tray window
 const createTrayWindow = () => {
-  trayWindow = new BrowserWindow({
+  const win = new BrowserWindow({
     width: 300,
     height: 600,
     show: false,
@@ -376,22 +521,34 @@ const createTrayWindow = () => {
       allowRunningInsecureContent: false,
     },
   });
+  trayWindow = win;
 
   // Update the URL loading to handle both development and production
   if (app.isPackaged) {
-    trayWindow.loadURL(`${resolveHtmlPath('index.html')}?tray=true`);
+    win.loadURL(`${resolveHtmlPath('index.html')}?tray=true`);
   } else {
-    trayWindow.loadURL(
+    win.loadURL(
       `http://localhost:${process.env.PORT || 1212}/index.html?tray=true`,
     );
   }
 
   // Hide window when it loses focus
-  trayWindow.on('blur', () => {
-    trayWindow?.hide();
+  win.on('blur', () => {
+    if (!isWindowAlive(win)) return;
+    try {
+      win.hide();
+    } catch (error) {
+      // Ignore teardown races.
+    }
   });
 
-  return trayWindow;
+  win.on('closed', () => {
+    if (trayWindow === win) {
+      trayWindow = null;
+    }
+  });
+
+  return win;
 };
 
 // Add this after the createTrayWindow function
@@ -424,8 +581,8 @@ const createDashboardWindow = () => {
   }
 
   dashboardWindow.once('ready-to-show', () => {
-    dashboardWindow.show();
-    dashboardWindow.focus();
+    if (!isWindowAlive(dashboardWindow)) return;
+    focusWindow(dashboardWindow);
   });
 
   return dashboardWindow;
@@ -437,22 +594,29 @@ function registerIpcHandlers() {
   ipcHandlersRegistered = true;
 
   const ensureTrayWindow = () => {
-    if (!trayWindow || trayWindow.isDestroyed()) {
+    if (!isWindowAlive(trayWindow)) {
       createTrayWindow();
     }
     return trayWindow;
   };
 
   const ensureMainWindow = async () => {
-    if (!mainWindow || mainWindow.isDestroyed()) {
+    if (!isWindowAlive(mainWindow)) {
       await createWindow();
     }
     return mainWindow;
   };
 
   ipcMain.handle('ui:set-scaling-enabled', (event, enabled: boolean) => {
-    const win = BrowserWindow.fromWebContents(event.sender);
-    if (!win || win.isDestroyed()) return false;
+    if (!isWebContentsAlive(event.sender)) return false;
+
+    let win: BrowserWindow | null = null;
+    try {
+      win = BrowserWindow.fromWebContents(event.sender);
+    } catch (error) {
+      return false;
+    }
+    if (!isWindowAlive(win)) return false;
 
     if (enabled) {
       uiScaleEnabledWebContents.add(event.sender.id);
@@ -461,7 +625,13 @@ function registerIpcHandlers() {
     }
 
     uiScaleEnabledWebContents.delete(event.sender.id);
-    win.webContents.setZoomFactor(1);
+    const webContents = getSafeWebContents(win);
+    if (!webContents) return false;
+    try {
+      webContents.setZoomFactor(1);
+    } catch (error) {
+      return false;
+    }
     return true;
   });
 
@@ -527,33 +697,45 @@ function registerIpcHandlers() {
 
   ipcMain.handle('open-tray-window', (event, bounds) => {
     const win = ensureTrayWindow();
-    if (!win) return;
+    if (!isWindowAlive(win)) return;
 
-    const windowBounds = win.getBounds();
+    let windowBounds;
+    try {
+      windowBounds = win.getBounds();
+    } catch (error) {
+      return;
+    }
 
     if (bounds) {
       const yPosition = bounds.y - windowBounds.height;
       const xPosition = Math.round(
         bounds.x - windowBounds.width / 2 + bounds.width / 2,
       );
-      win.setPosition(xPosition, yPosition);
+      try {
+        win.setPosition(xPosition, yPosition);
+      } catch (error) {
+        return;
+      }
     }
 
-    win.show();
-    win.focus();
+    try {
+      win.show();
+      win.focus();
+    } catch (error) {
+      // Ignore teardown races.
+    }
   });
 
   ipcMain.handle('show-dashboard', () => {
     const existingDashboard = BrowserWindow.getAllWindows().find((win) => {
-      const url = win.webContents.getURL();
+      const webContents = getSafeWebContents(win);
+      if (!webContents) return false;
+      const url = webContents.getURL();
       return url.includes('dashboard=true');
     });
 
     if (existingDashboard) {
-      if (existingDashboard.isMinimized()) {
-        existingDashboard.restore();
-      }
-      existingDashboard.focus();
+      focusWindow(existingDashboard);
       return;
     }
 
@@ -561,13 +743,7 @@ function registerIpcHandlers() {
   });
 
   ipcMain.handle('focus-main-window', () => {
-    if (!mainWindow || mainWindow.isDestroyed()) return;
-
-    if (mainWindow.isMinimized()) {
-      mainWindow.restore();
-    }
-    mainWindow.show();
-    mainWindow.focus();
+    focusWindow(mainWindow);
   });
 
   ipcMain.handle('get-current-window-info', async () => {
@@ -831,18 +1007,19 @@ function registerIpcHandlers() {
 
   ipcMain.handle('start-task', (event, taskId: number) => {
     try {
-      if (trayWindow && !trayWindow.isDestroyed()) {
-        trayWindow.webContents.send('open-task', taskId);
-        trayWindow.show();
-        trayWindow.focus();
+      if (isWindowAlive(trayWindow)) {
+        sendToWindow(trayWindow, 'open-task', taskId);
+        focusWindow(trayWindow);
         return;
       }
 
       const win = createTrayWindow();
-      win.webContents.once('did-finish-load', () => {
-        win.webContents.send('open-task', taskId);
-        win.show();
-        win.focus();
+      const winWebContents = getSafeWebContents(win);
+      if (!winWebContents) return;
+      winWebContents.once('did-finish-load', () => {
+        if (!isWindowAlive(win)) return;
+        sendToWindow(win, 'open-task', taskId);
+        focusWindow(win);
       });
     } catch (error) {
       console.error('Failed to start task:', error);
@@ -856,8 +1033,16 @@ function registerIpcHandlers() {
       if (!tray) return;
 
       const applyPassiveMode = (win: BrowserWindow) => {
-        const trayBounds = tray.getBounds();
-        const windowBounds = win.getBounds();
+        if (!isWindowAlive(win) || !tray) return;
+
+        let trayBounds;
+        let windowBounds;
+        try {
+          trayBounds = tray.getBounds();
+          windowBounds = win.getBounds();
+        } catch (error) {
+          return;
+        }
 
         const yPosition =
           process.platform === 'darwin'
@@ -868,19 +1053,24 @@ function registerIpcHandlers() {
           trayBounds.x - windowBounds.width / 2 + trayBounds.width / 2,
         );
 
-        win.setPosition(xPosition, yPosition);
-        win.show();
-        win.focus();
-        win.webContents.send('set-mode', 'passive');
+        try {
+          win.setPosition(xPosition, yPosition);
+        } catch (error) {
+          return;
+        }
+        focusWindow(win);
+        sendToWindow(win, 'set-mode', 'passive');
       };
 
-      if (trayWindow && !trayWindow.isDestroyed()) {
+      if (isWindowAlive(trayWindow)) {
         applyPassiveMode(trayWindow);
         return;
       }
 
       const win = createTrayWindow();
-      win.webContents.once('did-finish-load', () => applyPassiveMode(win));
+      const winWebContents = getSafeWebContents(win);
+      if (!winWebContents) return;
+      winWebContents.once('did-finish-load', () => applyPassiveMode(win));
     } catch (error) {
       console.error('Failed to start passive mode:', error);
       throw error;
@@ -890,25 +1080,36 @@ function registerIpcHandlers() {
   ipcMain.handle('open-tracker', (event, mode: 'passive' | 'tasks') => {
     try {
       const applyTrackerMode = (win: BrowserWindow) => {
+        if (!isWindowAlive(win)) return;
         const display = screen.getPrimaryDisplay();
-        const { width } = win.getBounds();
+        let width = 0;
+        try {
+          ({ width } = win.getBounds());
+        } catch (error) {
+          return;
+        }
 
         const x = display.bounds.width - width - 20;
         const y = 40;
 
-        win.setPosition(x, y);
-        win.webContents.send('set-mode', mode);
-        win.show();
-        win.focus();
+        try {
+          win.setPosition(x, y);
+        } catch (error) {
+          return;
+        }
+        sendToWindow(win, 'set-mode', mode);
+        focusWindow(win);
       };
 
-      if (trayWindow && !trayWindow.isDestroyed()) {
+      if (isWindowAlive(trayWindow)) {
         applyTrackerMode(trayWindow);
         return;
       }
 
       const win = createTrayWindow();
-      win.webContents.once('did-finish-load', () => applyTrackerMode(win));
+      const winWebContents = getSafeWebContents(win);
+      if (!winWebContents) return;
+      winWebContents.once('did-finish-load', () => applyTrackerMode(win));
     } catch (error) {
       console.error('Failed to open tracker:', error);
       throw error;
@@ -1009,28 +1210,31 @@ function registerIpcHandlers() {
     try {
       const recordings = await getSessionRecordingsWithImages(sessionId);
 
-      if (trayWindow && !trayWindow.isDestroyed()) {
-        trayWindow.hide();
+      if (isWindowAlive(trayWindow)) {
+        try {
+          trayWindow.hide();
+        } catch (error) {
+          // Ignore teardown races.
+        }
       }
 
       const existingEditorWindow = BrowserWindow.getAllWindows().find((win) => {
-        const url = win.webContents.getURL();
+        const webContents = getSafeWebContents(win);
+        if (!webContents) return false;
+        const url = webContents.getURL();
         return (
           url.includes('index.html') &&
           !url.includes('tray=true') &&
-          !win.isDestroyed() &&
+          isWindowAlive(win) &&
           win !== trayWindow
         );
       });
 
       if (existingEditorWindow) {
-        if (existingEditorWindow.isMinimized()) {
-          existingEditorWindow.restore();
-        }
-        existingEditorWindow.show();
-        existingEditorWindow.focus();
+        focusWindow(existingEditorWindow);
         setTimeout(() => {
-          existingEditorWindow.webContents.send('load-editor', {
+          if (!isWindowAlive(existingEditorWindow)) return;
+          sendToWindow(existingEditorWindow, 'load-editor', {
             sessionId,
             recordings,
           });
@@ -1039,13 +1243,12 @@ function registerIpcHandlers() {
       }
 
       const win = await ensureMainWindow();
-      if (!win || win.isDestroyed()) return;
+      if (!isWindowAlive(win)) return;
 
-      win.show();
-      win.focus();
+      focusWindow(win);
       setTimeout(() => {
-        if (win.isDestroyed()) return;
-        win.webContents.send('load-editor', { sessionId, recordings });
+        if (!isWindowAlive(win)) return;
+        sendToWindow(win, 'load-editor', { sessionId, recordings });
       }, 150);
     } catch (error) {
       console.error('Failed to show editor:', error);
@@ -1365,13 +1568,19 @@ const ensureTray = () => {
   }
 
   tray.on('click', (_event, bounds) => {
-    if (!trayWindow) {
+    if (!isWindowAlive(trayWindow)) {
       createTrayWindow();
     }
 
-    if (!trayWindow) return;
+    if (!isWindowAlive(trayWindow)) return;
+    const win = trayWindow;
 
-    const windowBounds = trayWindow.getBounds();
+    let windowBounds;
+    try {
+      windowBounds = win.getBounds();
+    } catch (error) {
+      return;
+    }
 
     // Position window above the tray icon
     const yPosition =
@@ -1381,85 +1590,104 @@ const ensureTray = () => {
 
     const xPosition = Math.round(bounds.x - windowBounds.width / 2 + bounds.width / 2);
 
-    trayWindow.setPosition(xPosition, yPosition);
+    try {
+      win.setPosition(xPosition, yPosition);
 
-    if (trayWindow.isVisible()) {
-      trayWindow.hide();
-    } else {
-      trayWindow.show();
-      trayWindow.focus();
+      if (win.isVisible()) {
+        win.hide();
+      } else {
+        focusWindow(win);
+      }
+    } catch (error) {
+      // Ignore teardown races.
     }
   });
 };
 
-const createWindow = async () => {
-  // Close any existing main windows first
-  BrowserWindow.getAllWindows().forEach((win) => {
-    if (win !== trayWindow) {
-      win.close();
-    }
-  });
+const createWindow = async (): Promise<BrowserWindow> => {
+  if (isWindowAlive(mainWindow)) {
+    focusWindow(mainWindow);
+    return mainWindow;
+  }
 
-  const { width, height } = getDefaultWindowBounds();
+  if (creatingMainWindow) {
+    return creatingMainWindow;
+  }
 
-  mainWindow = new BrowserWindow({
-    width,
-    height,
-    show: false,
-    titleBarStyle: 'hidden',
-    trafficLightPosition: {
-      x: 18,
-      y: 10,
-    },
-    webPreferences: {
-      allowRunningInsecureContent: false,
-      preload: getPreloadScriptPath(),
-      partition: 'persist:main',
-      enableWebSQL: false,
-    },
-  });
-  attachUiScaling(mainWindow);
+  creatingMainWindow = (async () => {
+    const { width, height } = getDefaultWindowBounds();
 
-  mainWindow.loadURL(resolveHtmlPath('index.html'));
-
-  // Show main window when ready
-  mainWindow.on('ready-to-show', () => {
-    if (!mainWindow || mainWindow.isDestroyed()) return;
-    mainWindow.show();
-    mainWindow.focus();
-  });
-
-  mainWindow.on('closed', () => {
-    mainWindow = null;
-  });
-
-  // Add this handler for window.open
-  mainWindow.webContents.setWindowOpenHandler(() => {
-    return {
-      action: 'allow',
-      overrideBrowserWindowOptions: {
-        frame: false,
-        titleBarStyle: 'hidden',
-        webPreferences: {
-          nodeIntegration: false,
-          contextIsolation: true,
-          preload: getPreloadScriptPath(),
-        },
+    const win = new BrowserWindow({
+      width,
+      height,
+      show: false,
+      titleBarStyle: 'hidden',
+      trafficLightPosition: {
+        x: 18,
+        y: 10,
       },
-    };
-  });
+      webPreferences: {
+        allowRunningInsecureContent: false,
+        preload: getPreloadScriptPath(),
+        partition: 'persist:main',
+        enableWebSQL: false,
+      },
+    });
 
-  ensureTray();
+    mainWindow = win;
+    attachUiScaling(win);
 
-  const menuBuilder = new MenuBuilder(mainWindow);
-  menuBuilder.buildMenu();
+    // Show this exact window instance when ready.
+    win.on('ready-to-show', () => {
+      if (!isWindowAlive(win)) return;
+      focusWindow(win);
+    });
 
-  ensureCursorMonitorStarted();
+    // Only clear mainWindow if this closed window is still the active reference.
+    win.on('closed', () => {
+      if (mainWindow === win) {
+        mainWindow = null;
+      }
+    });
 
-  if (!appUpdaterInitialized) {
-    appUpdaterInitialized = true;
-    // eslint-disable-next-line no-new
-    new AppUpdater();
+    const winWebContents = getSafeWebContents(win);
+    if (winWebContents) {
+      winWebContents.setWindowOpenHandler(() => {
+        return {
+          action: 'allow',
+          overrideBrowserWindowOptions: {
+            frame: false,
+            titleBarStyle: 'hidden',
+            webPreferences: {
+              nodeIntegration: false,
+              contextIsolation: true,
+              preload: getPreloadScriptPath(),
+            },
+          },
+        };
+      });
+    }
+
+    await win.loadURL(resolveHtmlPath('index.html'));
+
+    ensureTray();
+    const menuBuilder = new MenuBuilder(win);
+    menuBuilder.buildMenu();
+    ensureCursorMonitorStarted();
+
+    if (!appUpdaterInitialized) {
+      appUpdaterInitialized = true;
+      // eslint-disable-next-line no-new
+      new AppUpdater();
+    }
+
+    return win;
+  })();
+
+  try {
+    return await creatingMainWindow;
+  } finally {
+    creatingMainWindow = null;
   }
 };
 
@@ -1468,11 +1696,7 @@ const createWindow = async () => {
  */
 
 app.on('window-all-closed', () => {
-  if (mainWindow) {
-    mainWindow.close();
-  }
-  // Respect the OSX convention of having the application in memory even
-  // after all windows have been closed
+  // Respect the OSX convention of keeping the app running without windows.
   if (process.platform !== 'darwin') {
     app.quit();
   }
@@ -1480,24 +1704,29 @@ app.on('window-all-closed', () => {
 
 app
   .whenReady()
-  .then(() => {
+  .then(async () => {
     registerIpcHandlers();
-    createWindow();
+    await createWindow();
 
-    void (async () => {
-      const userResult = await getCurrentUser();
-      if (userResult.success && userResult.user) {
-        currentUserId = userResult.user.id;
-        void syncSessionsIfNeeded(userResult.user.id);
-      } else {
-        currentUserId = null;
-      }
-    })();
+    const userResult = await getCurrentUser();
+    if (userResult.success && userResult.user) {
+      currentUserId = userResult.user.id;
+      syncSessionsIfNeeded(userResult.user.id).catch((error) => {
+        console.error('Failed to sync sessions after app startup:', error);
+      });
+    } else {
+      currentUserId = null;
+    }
 
     app.on('activate', () => {
-      if (tray === null) {
-        createWindow();
+      if (!isWindowAlive(mainWindow)) {
+        createWindow().catch((error) => {
+          console.error('Failed to recreate main window on activate:', error);
+        });
+        return;
       }
+
+      focusWindow(mainWindow);
     });
   })
   .catch(console.log);

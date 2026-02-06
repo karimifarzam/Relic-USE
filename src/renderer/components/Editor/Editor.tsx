@@ -25,6 +25,7 @@ import {
 import myBoard from '../../../../assets/icons/myBoard.svg';
 import EditorSubmitToast, { EditorSubmitToastHandle } from './EditorSubmitToast';
 import TimelineScrollbar from './TimelineScrollbar';
+import { buildTimestampTimeline } from '../../../shared/sessionTimeline';
 
 interface Screenshot {
   id: string;
@@ -68,6 +69,19 @@ interface Recording {
   type: 'passive' | 'tasked';
   label?: string;
 }
+
+const toScreenshotTimelineItems = (recordings: Recording[]): Screenshot[] => {
+  return buildTimestampTimeline(recordings).map(({ item: recording, time }, index) => ({
+    id:
+      recording.id !== undefined && recording.id !== null
+        ? String(recording.id)
+        : `recording-${index}`,
+    timestamp: recording.timestamp,
+    imageUrl: recording.screenshot,
+    label: recording.label,
+    time,
+  }));
+};
 
 interface ScreenshotEditorProps {
   screenshots: Screenshot[];
@@ -796,14 +810,8 @@ function Editor() {
         };
 
         setCurrentSessionId(sessionId);
-        // Convert recordings to screenshots format
-        const convertedScreenshots = recordings.map((recording, index) => ({
-          id: String(recording.id),
-          timestamp: recording.timestamp,
-          imageUrl: recording.screenshot,
-          label: recording.label,
-          time: index, // Use index as time in seconds
-        }));
+        // Convert recordings to a stable, timestamp-based timeline.
+        const convertedScreenshots = toScreenshotTimelineItems(recordings);
         setScreenshots(convertedScreenshots);
         setOriginalScreenshots(convertedScreenshots);
         setPendingDeletions([]);
@@ -859,13 +867,7 @@ function Editor() {
 
             if (recordings && recordings.length > 0) {
               setCurrentSessionId(draftSession.id);
-              const convertedScreenshots = recordings.map((recording, index) => ({
-                id: String(recording.id),
-                timestamp: recording.timestamp,
-                imageUrl: recording.screenshot,
-                label: recording.label,
-                time: index, // Use index as time in seconds
-              }));
+              const convertedScreenshots = toScreenshotTimelineItems(recordings);
               setScreenshots(convertedScreenshots);
               setOriginalScreenshots(convertedScreenshots);
               setPendingDeletions([]);

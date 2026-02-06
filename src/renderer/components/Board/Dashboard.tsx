@@ -162,9 +162,8 @@ function Dashboard() {
 
   return (
     <main className={`min-h-0 ${isDark ? 'bg-industrial-black-primary' : 'bg-white'}`}>
-      <BoardHeader />
-
       <div className="py-6">
+        <BoardHeader />
         {/* Progress Overlay */}
       {submittingSessionId && submissionProgress && (
         <div className="fixed top-20 right-6 z-50">

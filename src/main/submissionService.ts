@@ -2,6 +2,7 @@ import { supabase } from './supabase';
 import { dbHelpers } from './db';
 import { getCurrentUser } from './auth';
 import * as fileStorage from './fileStorage';
+import { getLatestTimelineTimeSeconds } from '../shared/sessionTimeline';
 
 interface SubmissionResult {
   success: boolean;
@@ -19,6 +20,16 @@ interface UploadProgress {
   current: number;
   total: number;
   status: string;
+}
+
+function deriveDurationSeconds(
+  recordedDuration: number | null | undefined,
+  recordings: Array<{ timestamp?: string | null }>,
+): number {
+  if (recordings.length > 0) {
+    return getLatestTimelineTimeSeconds(recordings);
+  }
+  return Math.max(0, Math.floor(recordedDuration || 0));
 }
 
 /**
@@ -178,20 +189,20 @@ export async function validateSessionForSubmission(
       };
     }
 
-    // Check duration
-    if (!session.duration || session.duration <= 0) {
-      return {
-        valid: false,
-        error: 'Session must have a duration greater than 0',
-      };
-    }
-
     // Get recordings
     const recordings = await dbHelpers.getSessionRecordings(sessionId);
     if (!recordings || recordings.length === 0) {
       return {
         valid: false,
         error: 'Session must have at least one recording',
+      };
+    }
+
+    const effectiveDuration = deriveDurationSeconds(session.duration, recordings);
+    if (!Number.isFinite(effectiveDuration) || effectiveDuration < 0) {
+      return {
+        valid: false,
+        error: 'Session must have a valid duration',
       };
     }
 
@@ -230,6 +241,25 @@ export async function submitSessionToSupabase(
     if (!recordings) {
       return { success: false, error: 'Failed to fetch recordings' };
     }
+    if (recordings.length === 0) {
+      return { success: false, error: 'Session must have at least one recording' };
+    }
+
+    const effectiveDuration = deriveDurationSeconds(session.duration, recordings);
+    if (!Number.isFinite(effectiveDuration) || effectiveDuration < 0) {
+      return { success: false, error: 'Session must have a valid duration' };
+    }
+
+    if (session.duration !== effectiveDuration) {
+      try {
+        await dbHelpers.updateDuration(sessionId, effectiveDuration);
+      } catch (error) {
+        console.warn(
+          `Failed to persist derived duration for session ${sessionId}:`,
+          error,
+        );
+      }
+    }
 
     // 4. Get comments
     const comments = await dbHelpers.getSessionComments(sessionId);
@@ -245,7 +275,7 @@ export async function submitSessionToSupabase(
       .from('sessions')
       .insert({
         user_id: userId,
-        duration: session.duration,
+        duration: effectiveDuration,
         created_at: session.created_at,
         approval_state: 'submitted',
         session_status: session.session_status || 'passive',
@@ -372,7 +402,7 @@ export async function submitSessionToSupabase(
     }
 
     // 9. Calculate points (example: 5 points per minute)
-    const pointsEarned = Math.floor((session.duration || 0) / 60) * 5;
+    const pointsEarned = Math.floor(effectiveDuration / 60) * 5;
 
     // 10. Update user points
     if (pointsEarned > 0) {
@@ -393,7 +423,7 @@ export async function submitSessionToSupabase(
       user_id: userId,
       created_at: session.created_at,
       submitted_at: new Date().toISOString(),
-      duration: session.duration || 0,
+      duration: effectiveDuration,
       session_status: session.session_status || 'passive',
       task_id: session.task_id || null,
       reward_id: session.reward_id || null,

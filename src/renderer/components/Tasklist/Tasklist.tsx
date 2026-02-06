@@ -131,7 +131,12 @@ function TaskList() {
         {/* Header with Title and Filters */}
         <div className="flex flex-col sm:flex-row sm:items-center justify-between gap-4 mb-8">
           <div className="flex items-center gap-4 sm:self-start sm:pt-1">
-            <h1 className={`text-2xl font-mono font-light tracking-tight ${isDark ? 'text-white' : 'text-gray-900'}`}>TASK SELECTION</h1>
+            <h1 className={`text-2xl font-mono font-light tracking-tight ${isDark ? 'text-white' : 'text-gray-900'}`}>
+              <span className="inline-flex items-baseline gap-1.5">
+                <span>TASK</span>
+                <span>SELECTION</span>
+              </span>
+            </h1>
           </div>
 
           {/* Search and Filters */}

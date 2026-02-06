@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState, useEffect, type MouseEvent as ReactMouseEvent } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import {
   LineChart,
@@ -59,6 +59,54 @@ function Sidebar() {
     }
   };
 
+  const handleLogoHoverMove = (event: ReactMouseEvent<HTMLDivElement>) => {
+    const rect = event.currentTarget.getBoundingClientRect();
+    if (rect.width <= 0 || rect.height <= 0) return;
+
+    const relativeX = (event.clientX - rect.left) / rect.width - 0.5;
+    const relativeY = (event.clientY - rect.top) / rect.height - 0.5;
+
+    const cursorMaxX = 8;
+    const cursorMaxY = 6;
+    const cursorOffsetX = Math.max(
+      -cursorMaxX,
+      Math.min(cursorMaxX, relativeX * cursorMaxX * 2),
+    );
+    const cursorOffsetY = Math.max(
+      -cursorMaxY,
+      Math.min(cursorMaxY, relativeY * cursorMaxY * 2),
+    );
+
+    const baseOffsetX = cursorOffsetX * 0.4;
+    const baseOffsetY = cursorOffsetY * 0.35;
+
+    event.currentTarget.style.setProperty(
+      '--logo-glow-x',
+      `${baseOffsetX.toFixed(2)}px`,
+    );
+    event.currentTarget.style.setProperty(
+      '--logo-glow-y',
+      `${baseOffsetY.toFixed(2)}px`,
+    );
+    event.currentTarget.style.setProperty(
+      '--logo-cursor-glow-x',
+      `${cursorOffsetX.toFixed(2)}px`,
+    );
+    event.currentTarget.style.setProperty(
+      '--logo-cursor-glow-y',
+      `${cursorOffsetY.toFixed(2)}px`,
+    );
+    event.currentTarget.style.setProperty('--logo-cursor-glow-opacity', '1');
+  };
+
+  const resetLogoGlowOffset = (event: ReactMouseEvent<HTMLDivElement>) => {
+    event.currentTarget.style.setProperty('--logo-glow-x', '0px');
+    event.currentTarget.style.setProperty('--logo-glow-y', '0px');
+    event.currentTarget.style.setProperty('--logo-cursor-glow-x', '0px');
+    event.currentTarget.style.setProperty('--logo-cursor-glow-y', '0px');
+    event.currentTarget.style.setProperty('--logo-cursor-glow-opacity', '0');
+  };
+
   // Handle route changes
   useEffect(() => {
     const currentPath = location.pathname;
@@ -70,12 +118,48 @@ function Sidebar() {
 
   return (
     <aside className={`w-[200px] app-titlebar-pad h-full flex flex-col sticky top-0 overflow-hidden ${isDark ? 'bg-industrial-black-secondary border-r border-industrial-border-subtle' : 'bg-gray-50 border-r border-gray-200'}`}>
-      {/* Logo */}
-      <div className="flex items-center px-4 mb-12 gap-2 mt-4 ml-6">
-        <img src={logo} className="h-8 w-auto object-contain" alt="Logo" />
-        <span className={`text-2xl font-bold tracking-tight uppercase ${isDark ? 'text-white' : 'text-gray-900'}`}>
-          Relic
-        </span>
+      {/* Logo hover zone (hover above logo -> glow below logo) */}
+      <div className="px-4 mb-9 mt-7">
+        <div
+          data-testid="logo-hover-group"
+          className="group relative mx-auto w-fit"
+          onMouseMove={handleLogoHoverMove}
+          onMouseLeave={resetLogoGlowOffset}
+        >
+          <div
+            data-testid="logo-hover-hotspot"
+            aria-hidden="true"
+            className="absolute left-1/2 -top-2 h-3 w-14 -translate-x-1/2"
+          />
+          <div
+            data-testid="logo-hover-glow"
+            aria-hidden="true"
+            className={`pointer-events-none absolute left-1/2 top-full mt-1.5 h-5 w-24 rounded-full blur-xl opacity-0 transition-all duration-200 group-hover:opacity-100 ${
+              isDark ? 'bg-industrial-orange/20' : 'bg-blue-400/24'
+            }`}
+            style={{
+              transform:
+                'translate(calc(-50% + var(--logo-glow-x, 0px)), var(--logo-glow-y, 0px))',
+            }}
+          />
+          <div
+            data-testid="logo-hover-cursor-glow"
+            aria-hidden="true"
+            className={`pointer-events-none absolute left-1/2 top-1/2 h-4 w-10 rounded-full blur-md transition-all duration-150 ${
+              isDark ? 'bg-industrial-orange/70' : 'bg-blue-400/75'
+            }`}
+            style={{
+              opacity: 'var(--logo-cursor-glow-opacity, 0)',
+              transform:
+                'translate(calc(-50% + var(--logo-cursor-glow-x, 0px)), calc(-50% + 10px + var(--logo-cursor-glow-y, 0px)))',
+            }}
+          />
+          <img
+            src={logo}
+            className="relative z-10 h-8 w-auto object-contain"
+            alt="Relic logo"
+          />
+        </div>
       </div>
 
       {/* Navigation */}
